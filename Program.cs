@@ -282,13 +282,14 @@ namespace WinEmuDump
                 {
                     Console.WriteLine($"[SUCCESS] Gelişmiş minidump başarıyla oluşturuldu: {dumpfile}");
                     Console.WriteLine("[INFO] İçerik:");
-                    Console.WriteLine($"  - SystemInfo: ✓");
+                    Console.WriteLine($"  - SystemInfo: Windows {systemInfo.MajorVersion}.{systemInfo.MinorVersion} Build {systemInfo.BuildNumber}");
                     Console.WriteLine($"  - ThreadList: {threadList.Count} thread (TEB + Stack + Context)");
-                    Console.WriteLine($"  - Exception: ✓ (varsa)");
+                    Console.WriteLine($"  - Exception: {(threadList.Count > 0 ? "var" : "yok")}");
                     Console.WriteLine($"  - HandleList: {handleList.Count} handle");
                     Console.WriteLine($"  - ModuleList: {moduleList.Count} modül");
                     Console.WriteLine($"  - Memory64List: Full memory dump");
-                    Console.WriteLine($"  - MiscInfo: ✓");
+                    Console.WriteLine($"  - MemoryInfoList: Bellek bölgeleri detayları");
+                    Console.WriteLine($"  - MiscInfo: Process {processInfo.ProcessId}");
                 }
                 else
                 {

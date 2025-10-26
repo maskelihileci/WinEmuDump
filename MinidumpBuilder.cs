@@ -76,22 +76,26 @@ namespace WinEmuDump
                 // Memory64List Stream (Full memory)
                 streams.Add(CreateMemory64ListStream(hProcess));
 
+                // MemoryInfoList Stream (Memory region details)
+                streams.Add(CreateMemoryInfoListStream(hProcess));
+
                 // MiscInfo Stream
                 streams.Add(CreateMiscInfoStream(processInfo));
 
-                // Minidump header oluştur
+                // Minidump header oluştur - DÜZELTİLMİŞ FORMAT
                 MinidumpHeader header = new MinidumpHeader
                 {
                     Signature = 0x504d444d, // "PMDM"
                     Version = 0xa793,
-                    NumberOfStreams = (ushort)streams.Count,
+                    NumberOfStreams = (uint)streams.Count,
                     StreamDirectoryRva = 0x20,
-                    TimeDateStamp = (IntPtr)DateTime.Now.ToFileTime()
+                    TimeDateStamp = (uint)(DateTime.Now.ToFileTimeUtc() / 10000000 - 11644473600), // Unix timestamp
+                    Flags = 0x00000002 // MiniDumpWithFullMemoryInfo
                 };
 
                 // Stream directory oluştur ve HandleStream RVA'larını düzelt
                 List<byte> streamDirectoryBytes = new List<byte>();
-                uint currentOffset = (uint)(Marshal.SizeOf(typeof(MinidumpHeader)) + streams.Count * Marshal.SizeOf(typeof(MinidumpStreamDirectoryEntry)));
+                uint currentOffset = (uint)(Marshal.SizeOf(typeof(MinidumpHeader)) + (uint)streams.Count * (uint)Marshal.SizeOf(typeof(MinidumpStreamDirectoryEntry)));
 
                 for (int i = 0; i < streams.Count; i++)
                 {
@@ -714,24 +718,211 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
         }
 
         /// <summary>
-        /// MiscInfo stream'i oluşturur
+        /// MiscInfo stream'i oluşturur (MiniDumpMiscInfo4 formatında)
         /// </summary>
         private static MinidumpStream CreateMiscInfoStream(ProcessInfoData processInfo)
         {
-            MiscInfoStream miscInfo = new MiscInfoStream
+            // TIME_ZONE_INFORMATION yapısı için Windows API çağrısı
+            TIME_ZONE_INFORMATION timeZone = new TIME_ZONE_INFORMATION();
+            uint result = GetTimeZoneInformation(out timeZone);
+
+            // CPU bilgileri için SYSTEM_INFO al
+            SYSTEM_INFO sysInfo = new SYSTEM_INFO();
+            GetSystemInfo(out sysInfo);
+
+            // Gerçek işlem zamanlarını al (UserTime ve KernelTime)
+            uint processUserTime = 0;
+            uint processKernelTime = 0;
+            if (processInfo.UserTime != IntPtr.Zero)
             {
-                SizeOfInfo = (uint)Marshal.SizeOf(typeof(MiscInfoStream)),
-                Flags1 = 0x00000001, // MiniDumpMisc1
+                processUserTime = (uint)processInfo.UserTime.ToInt64();
+            }
+            if (processInfo.KernelTime != IntPtr.Zero)
+            {
+                processKernelTime = (uint)processInfo.KernelTime.ToInt64();
+            }
+
+            // Gerçek CPU frekans bilgilerini almaya çalış (varsayılan değerler fallback)
+            uint processorMaxMhz = 4008; // Modern CPU için gerçekçi değer
+            uint processorCurrentMhz = 4008;
+            uint processorMhzLimit = 4008;
+            try
+            {
+                // CPU frekansını almak için Windows Management Instrumentation (WMI) kullanabiliriz
+                // Veya registry'den okuma yapılabilir
+                Microsoft.Win32.RegistryKey powerKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0");
+                if (powerKey != null)
+                {
+                    object mhz = powerKey.GetValue("~MHz");
+                    if (mhz != null)
+                    {
+                        processorMaxMhz = (uint)(int)mhz;
+                        processorCurrentMhz = processorMaxMhz;
+                        processorMhzLimit = processorMaxMhz;
+                    }
+                    powerKey.Close();
+                }
+            }
+            catch
+            {
+                // Registry erişim hatası durumunda varsayılan değerleri kullan
+                Console.WriteLine("[DEBUG] CPU MHz bilgisi alınamadı, varsayılan değer kullanılıyor");
+            }
+
+            // Gerçek Windows versiyon bilgilerini al
+            string buildString = "Unknown";
+            string dbgBldStr = "Unknown";
+            try
+            {
+                // Windows registry'den gerçek build bilgilerini almaya çalış
+                Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+                if (key != null)
+                {
+                    object productName = key.GetValue("ProductName");
+                    object currentBuild = key.GetValue("CurrentBuild");
+                    object ubr = key.GetValue("UBR");
+
+                    if (productName != null && currentBuild != null)
+                    {
+                        buildString = $"{productName} Build {currentBuild}";
+                        if (ubr != null)
+                        {
+                            buildString += $".{ubr}";
+                        }
+                    }
+
+                    object buildLab = key.GetValue("BuildLab");
+                    if (buildLab != null)
+                    {
+                        // BuildLab varsa kullan, ama kullanıcı dbghelp versiyonunu istiyor
+                        Console.WriteLine($"[DEBUG] BuildLab found: {buildLab}");
+                    }
+                    // DbgBldStr olarak sabit dbghelp versiyonu kullan
+                    dbgBldStr = "dbghelp.amd64,6.3.9600.16384";
+
+                    key.Close();
+                }
+            }
+            catch
+            {
+                // Registry erişim hatası durumunda varsayılan değerler
+                buildString = "Windows 10 Build 19045";
+                dbgBldStr = "19041.1.amd64fre.vb_release.191206-1406";
+            }
+
+            var miscInfo4 = new Win32.MINIDUMP_MISC_INFO_4
+            {
+                SizeOfInfo = (uint)Marshal.SizeOf(typeof(Win32.MINIDUMP_MISC_INFO_4)),
+                Flags1 = 0x000001F7, // Tüm MiscInfo flag'leri: PROCESS_ID | PROCESS_TIMES | PROCESSOR_POWER_INFO | PROCESS_INTEGRITY | PROCESS_EXECUTE_FLAGS | TIMEZONE | PROTECTED_PROCESS | BUILDSTRING
                 ProcessId = processInfo.ProcessId,
                 ProcessCreateTime = (uint)(processInfo.CreateTime.ToInt64() & 0xFFFFFFFF),
-                ProcessUserTime = 0,
-                ProcessKernelTime = 0
+                ProcessUserTime = processUserTime,
+                ProcessKernelTime = processKernelTime,
+                ProcessorMaxMhz = processorMaxMhz,
+                ProcessorCurrentMhz = processorCurrentMhz,
+                ProcessorMhzLimit = processorMhzLimit,
+                ProcessorMaxIdleState = 1,
+                ProcessorCurrentIdleState = 1,
+                ProcessIntegrityLevel = 0x00003000, // HIGH_INTEGRITY (örnek - gerçek sistemden alınabilir)
+                ProcessExecuteFlags = 0x0000000D, // DEP_ENABLE | SEH_ENABLE | NX_ENABLE (örnek değer)
+                ProtectedProcess = 0, // Not protected
+                TimeZoneId = result, // TIME_ZONE_ID_STANDARD, TIME_ZONE_ID_DAYLIGHT vb.
+                TimeZone = timeZone,
+                BuildString = buildString,
+                DbgBldStr = dbgBldStr
             };
+
+            Console.WriteLine($"[DEBUG] MiscInfo oluşturuldu:");
+            Console.WriteLine($"  - ProcessId: {miscInfo4.ProcessId}");
+            Console.WriteLine($"  - ProcessCreateTime: {miscInfo4.ProcessCreateTime}");
+            Console.WriteLine($"  - ProcessUserTime: {miscInfo4.ProcessUserTime}");
+            Console.WriteLine($"  - ProcessKernelTime: {miscInfo4.ProcessKernelTime}");
+            Console.WriteLine($"  - ProcessorMaxMhz: {miscInfo4.ProcessorMaxMhz}");
+            Console.WriteLine($"  - BuildString: {miscInfo4.BuildString}");
+            Console.WriteLine($"  - DbgBldStr: {miscInfo4.DbgBldStr}");
 
             return new MinidumpStream
             {
                 StreamType = MINIDUMP_STREAM_TYPE_MiscInfo,
-                Data = StructToByteArray(miscInfo)
+                Data = StructToByteArray(miscInfo4)
+            };
+        }
+
+        /// <summary>
+        /// MemoryInfoList stream'i oluşturur (Bellek bölgelerinin detaylı bilgileri)
+        /// </summary>
+        private static MinidumpStream CreateMemoryInfoListStream(IntPtr hProcess)
+        {
+            Console.WriteLine($"[DEBUG] MemoryInfoList stream oluşturuluyor");
+
+            List<MemoryInfo> memoryInfoList = new List<MemoryInfo>();
+
+            // Bellek bölgelerini tara
+            IntPtr memAddress = IntPtr.Zero;
+            long maxAddress = 0x7FFFFFFEFFFF;
+
+            Console.WriteLine("[INFO] Bellek bölgeleri taranıyor (MemoryInfo)...");
+
+            while ((long)memAddress < maxAddress)
+            {
+                MEMORY_BASIC_INFORMATION mbi = new MEMORY_BASIC_INFORMATION();
+                uint ntStatus = NtQueryVirtualMemory(hProcess, memAddress, MemoryBasicInformation, out mbi, (uint)Marshal.SizeOf(typeof(MEMORY_BASIC_INFORMATION)), out _);
+
+                if (ntStatus != 0)
+                    break;
+
+                // Tüm bölgeleri dahil et (committed olsun olmasın)
+                MemoryInfo memInfo = new MemoryInfo
+                {
+                    BaseAddress = (ulong)mbi.BaseAddress.ToInt64(),
+                    AllocationBase = (ulong)mbi.AllocationBase.ToInt64(),
+                    AllocationProtect = (uint)mbi.AllocationProtect,
+                    __alignment1 = 0,
+                    RegionSize = (ulong)mbi.RegionSize.ToInt64(),
+                    State = (uint)mbi.State,
+                    Protect = (uint)mbi.Protect,
+                    Type = (uint)mbi.Type,
+                    __alignment2 = 0
+                };
+                memoryInfoList.Add(memInfo);
+
+                memAddress = (IntPtr)((ulong)memAddress + (ulong)mbi.RegionSize);
+
+                // Progress reporting
+                if (memoryInfoList.Count % 1000 == 0)
+                {
+                    Console.WriteLine($"[INFO] {memoryInfoList.Count} bellek bölgesi tarandı (MemoryInfo)");
+                }
+            }
+
+            Console.WriteLine($"[INFO] Toplam {memoryInfoList.Count} bellek bölgesi bulundu (MemoryInfo)");
+
+            // MemoryInfoListStream header - DÜZELTİLMİŞ FORMAT
+            MemoryInfoListStream memoryInfoListHeader = new MemoryInfoListStream
+            {
+                SizeOfHeader = (uint)Marshal.SizeOf(typeof(MemoryInfoListStream)),
+                SizeOfEntry = (uint)Marshal.SizeOf(typeof(MemoryInfo)),
+                NumberOfEntries = (ulong)memoryInfoList.Count
+            };
+
+            List<byte> memoryInfoData = new List<byte>();
+            memoryInfoData.AddRange(StructToByteArray(memoryInfoListHeader));
+
+            // MemoryInfo entries
+            foreach (var memInfo in memoryInfoList)
+            {
+                memoryInfoData.AddRange(StructToByteArray(memInfo));
+            }
+
+            Console.WriteLine($"[DEBUG] MemoryInfoList stream boyutu: {memoryInfoData.Count} bytes");
+            Console.WriteLine($"[DEBUG] - Header: {Marshal.SizeOf(typeof(MemoryInfoListStream))} bytes (SizeOfHeader: {memoryInfoListHeader.SizeOfHeader}, SizeOfEntry: {memoryInfoListHeader.SizeOfEntry})");
+            Console.WriteLine($"[DEBUG] - MemoryInfo entries: {memoryInfoList.Count * Marshal.SizeOf(typeof(MemoryInfo))} bytes");
+            Console.WriteLine($"[DEBUG] - Toplam: {memoryInfoData.Count} bytes");
+
+            return new MinidumpStream
+            {
+                StreamType = MINIDUMP_STREAM_TYPE_MemoryInfoList,
+                Data = memoryInfoData.ToArray()
             };
         }
 

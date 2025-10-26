@@ -6,6 +6,12 @@ namespace WinEmuDump
 {
     internal class Win32
     {
+        ///////////////// WINDOWS CONSTANTS /////////////////
+        public const uint TIME_ZONE_ID_UNKNOWN = 0;
+        public const uint TIME_ZONE_ID_STANDARD = 1;
+        public const uint TIME_ZONE_ID_DAYLIGHT = 2;
+        public const int MAX_PATH = 260;
+
         ///////////////// CONSTANTS /////////////////
         public const int MEM_COMMIT = 0x00001000;
         public const int PAGE_NOACCESS = 0x01;
@@ -99,6 +105,37 @@ namespace WinEmuDump
         [DllImport("kernel32.dll")]
         public static extern void GetSystemInfo(out SYSTEM_INFO lpSystemInfo);
 
+        [DllImport("kernel32.dll")]
+        public static extern uint GetTimeZoneInformation(out TIME_ZONE_INFORMATION lpTimeZoneInformation);
+
+        ///////////////// TIME ZONE STRUCT /////////////////
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct TIME_ZONE_INFORMATION
+        {
+            public int Bias;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+            public string StandardName;
+            public SYSTEMTIME StandardDate;
+            public int StandardBias;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+            public string DaylightName;
+            public SYSTEMTIME DaylightDate;
+            public int DaylightBias;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct SYSTEMTIME
+        {
+            public short Year;
+            public short Month;
+            public short DayOfWeek;
+            public short Day;
+            public short Hour;
+            public short Minute;
+            public short Second;
+            public short Milliseconds;
+        }
+
         
         ///////////////// STRUCTS /////////////////
         [StructLayout(LayoutKind.Sequential)]
@@ -171,16 +208,16 @@ namespace WinEmuDump
 
 
         ////////////// STRUCTS - Minidump file //////////
-        [StructLayout(LayoutKind.Sequential)]
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
         public struct MinidumpHeader
         {
             public uint Signature;
-            public ushort Version;
-            public ushort ImplementationVersion;
-            public ushort NumberOfStreams;
+            public uint Version;
+            public uint NumberOfStreams;
             public uint StreamDirectoryRva;
             public uint CheckSum;
-            public IntPtr TimeDateStamp;
+            public uint TimeDateStamp;
+            public ulong Flags;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -694,22 +731,26 @@ namespace WinEmuDump
             public uint Version;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        public struct MemoryInfo
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public unsafe struct MemoryInfo
         {
-            public IntPtr BaseAddress;
-            public IntPtr AllocationBase;
+            public ulong BaseAddress;
+            public ulong AllocationBase;
             public uint AllocationProtect;
-            public IntPtr RegionSize;
+            public uint __alignment1;
+            public ulong RegionSize;
             public uint State;
             public uint Protect;
             public uint Type;
+            public uint __alignment2;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
         public struct MemoryInfoListStream
         {
-            public uint NumberOfEntries;
+            public uint SizeOfHeader;
+            public uint SizeOfEntry;
+            public ulong NumberOfEntries;
         }
 
         ///////////////// MODULE INFO STRUCT /////////////////
@@ -844,6 +885,32 @@ namespace WinEmuDump
         {
             public uint NumberOfThreads;
             // MINIDUMP_THREAD_EX entries follow
+        }
+
+        // MINIDUMP_MISC_INFO_4 - Extended misc info for minidump (Windows Vista+)
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 4)]
+        public struct MINIDUMP_MISC_INFO_4
+        {
+            public uint SizeOfInfo;
+            public uint Flags1;
+            public uint ProcessId;
+            public uint ProcessCreateTime;
+            public uint ProcessUserTime;
+            public uint ProcessKernelTime;
+            public uint ProcessorMaxMhz;
+            public uint ProcessorCurrentMhz;
+            public uint ProcessorMhzLimit;
+            public uint ProcessorMaxIdleState;
+            public uint ProcessorCurrentIdleState;
+            public uint ProcessIntegrityLevel;
+            public uint ProcessExecuteFlags;
+            public uint ProtectedProcess;
+            public uint TimeZoneId;
+            public TIME_ZONE_INFORMATION TimeZone;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string BuildString;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 40)]
+            public string DbgBldStr;
         }
     }
 }

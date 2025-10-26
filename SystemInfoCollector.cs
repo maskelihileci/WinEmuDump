@@ -124,41 +124,88 @@ namespace WinEmuDump
                 return false;
             }
         }
+/// <summary>
+/// İşlem bilgilerini toplar
+/// </summary>
+/// <param name="hProcess">Hedef işlemin handle'ı</param>
+/// <param name="processInfo">Toplanan işlem bilgilerini içeren çıkış parametresi</param>
+/// <returns>Başarılı ise true, aksi halde false</returns>
+public static bool CollectProcessInfo(IntPtr hProcess, out ProcessInfoData processInfo)
+{
+    processInfo = new ProcessInfoData();
 
-        /// <summary>
-        /// İşlem bilgilerini toplar
-        /// </summary>
-        /// <param name="hProcess">Hedef işlemin handle'ı</param>
-        /// <param name="processInfo">Toplanan işlem bilgilerini içeren çıkış parametresi</param>
-        /// <returns>Başarılı ise true, aksi halde false</returns>
-        public static bool CollectProcessInfo(IntPtr hProcess, out ProcessInfoData processInfo)
+    try
+    {
+        int processId = GetProcessIdFromHandle(hProcess);
+        Process process = Process.GetProcessById(processId);
+
+        processInfo.ProcessId = (uint)process.Id;
+        processInfo.ParentProcessId = 0; // Process sınıfından doğrudan alınamıyor
+        processInfo.CreateTime = DateTimeToFileTime(process.StartTime);
+        processInfo.ExitTime = process.HasExited ? DateTimeToFileTime(process.ExitTime) : IntPtr.Zero;
+
+        // Gerçek işlem zamanlarını NtQueryInformationProcess ile al
+        try
         {
-            processInfo = new ProcessInfoData();
+            // PROCESS_TIMES yapısı için gerekli boyutu hesapla
+            uint processTimesSize = (uint)(Marshal.SizeOf(typeof(long)) * 4); // CreateTime, ExitTime, KernelTime, UserTime
+            IntPtr processTimesPtr = Marshal.AllocHGlobal((int)processTimesSize);
 
             try
             {
-                int processId = GetProcessIdFromHandle(hProcess);
-                Process process = Process.GetProcessById(processId);
+                uint ntstatus = NtQueryInformationProcess(hProcess, 4, processTimesPtr, processTimesSize, out uint returnLength); // ProcessTimes = 4
 
-                processInfo.ProcessId = (uint)process.Id;
-                processInfo.ParentProcessId = 0; // Process sınıfından doğrudan alınamıyor
-                processInfo.CreateTime = DateTimeToFileTime(process.StartTime);
-                processInfo.ExitTime = process.HasExited ? DateTimeToFileTime(process.ExitTime) : IntPtr.Zero;
-                processInfo.UserTime = IntPtr.Zero; // Process sınıfından alınamıyor
-                processInfo.KernelTime = IntPtr.Zero; // Process sınıfından alınamıyor
-                processInfo.ImageName = process.ProcessName;
-                processInfo.CommandLine = GetCommandLine(process);
+                if (ntstatus == 0 && returnLength >= processTimesSize)
+                {
+                    // FILETIME değerlerini oku (saniye cinsinden, 1970'den beri)
+                    long createTime = Marshal.ReadInt64(processTimesPtr, 0);
+                    long exitTime = Marshal.ReadInt64(processTimesPtr, 8);
+                    long kernelTime = Marshal.ReadInt64(processTimesPtr, 16);
+                    long userTime = Marshal.ReadInt64(processTimesPtr, 24);
 
-                Console.WriteLine($"[INFO] İşlem bilgileri toplandı: {processInfo.ImageName} (PID: {processInfo.ProcessId})");
-                return true;
+                    // .NET DateTime'a çevir ve FILETIME'a geri çevir
+                    processInfo.UserTime = (IntPtr)userTime;
+                    processInfo.KernelTime = (IntPtr)kernelTime;
+
+                    Console.WriteLine($"[DEBUG] Process times - User: {userTime}, Kernel: {kernelTime}");
+                }
+                else
+                {
+                    // Fallback: Process.TotalProcessorTime kullan
+                    TimeSpan totalProcessorTime = process.TotalProcessorTime;
+                    TimeSpan privilegedProcessorTime = process.PrivilegedProcessorTime;
+                    TimeSpan userProcessorTime = totalProcessorTime - privilegedProcessorTime;
+
+                    processInfo.UserTime = (IntPtr)(userProcessorTime.Ticks * 100);
+                    processInfo.KernelTime = (IntPtr)(privilegedProcessorTime.Ticks * 100);
+
+                    Console.WriteLine($"[DEBUG] Fallback process times - User: {processInfo.UserTime}, Kernel: {processInfo.KernelTime}");
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                Console.WriteLine($"[ERROR] İşlem bilgileri toplanamadı: {ex.Message}");
-                return false;
+                Marshal.FreeHGlobal(processTimesPtr);
             }
         }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARNING] Process times alınamadı: {ex.Message}");
+            processInfo.UserTime = IntPtr.Zero;
+            processInfo.KernelTime = IntPtr.Zero;
+        }
 
+        processInfo.ImageName = process.ProcessName;
+        processInfo.CommandLine = GetCommandLine(process);
+
+        Console.WriteLine($"[INFO] İşlem bilgileri toplandı: {processInfo.ImageName} (PID: {processInfo.ProcessId})");
+        return true;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[ERROR] İşlem bilgileri toplanamadı: {ex.Message}");
+        return false;
+    }
+}
         /// <summary>
         /// İşlemin komut satırını alır
         /// </summary>
