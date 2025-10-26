@@ -371,12 +371,7 @@ namespace WinEmuDump
                     BaseAddress = baseAddress,
                     Size = (IntPtr)moduleSize,
                     Timestamp = 0,
-                    Checksum = IntPtr.Zero,
-                    NumNames = IntPtr.Zero,
-                    NumFunctions = IntPtr.Zero,
-                    NumLines = IntPtr.Zero,
-                    NumLines26 = IntPtr.Zero,
-                    NumLinesCV = IntPtr.Zero,
+                    Checksum = 0,
                     ModuleNameRva = 0,
                     ImageName = Marshal.StringToHGlobalUni(process.MainModule.FileName)
                 };
@@ -393,12 +388,7 @@ namespace WinEmuDump
                             BaseAddress = module.BaseAddress,
                             Size = (IntPtr)module.ModuleMemorySize,
                             Timestamp = 0,
-                            Checksum = IntPtr.Zero,
-                            NumNames = IntPtr.Zero,
-                            NumFunctions = IntPtr.Zero,
-                            NumLines = IntPtr.Zero,
-                            NumLines26 = IntPtr.Zero,
-                            NumLinesCV = IntPtr.Zero,
+                            Checksum = 0,
                             ModuleNameRva = 0,
                             ImageName = Marshal.StringToHGlobalUni(module.FileName)
                         };

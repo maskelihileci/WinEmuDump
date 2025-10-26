@@ -36,7 +36,7 @@ namespace WinEmuDump
                     systemInfo.MinorVersion = 0;
                     systemInfo.BuildNumber = 19041;
                     systemInfo.PlatformId = 2;
-                    systemInfo.CSDVersion = "Windows 10";
+                    systemInfo.CSDVersion = "Service Pack 0";
                 }
                 else
                 {
@@ -44,7 +44,16 @@ namespace WinEmuDump
                     systemInfo.MinorVersion = (uint)osVersion.dwMinorVersion;
                     systemInfo.BuildNumber = (uint)osVersion.dwBuildNumber;
                     systemInfo.PlatformId = (uint)osVersion.dwPlatformId;
-                    systemInfo.CSDVersion = osVersion.szCSDVersion;
+                    
+                    // CSDVersion - Windows 10+ için genelde boş, fallback değer kullan
+                    if (string.IsNullOrEmpty(osVersion.szCSDVersion))
+                    {
+                        systemInfo.CSDVersion = "Service Pack 0";
+                    }
+                    else
+                    {
+                        systemInfo.CSDVersion = osVersion.szCSDVersion;
+                    }
                 }
 
                 // Sistem bilgilerini al

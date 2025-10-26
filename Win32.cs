@@ -198,6 +198,51 @@ namespace WinEmuDump
             public string Buffer;
         }
 
+        // MINIDUMP_SYSTEM_INFO - Doğru yapı (DbgHelp uyumlu)
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_SYSTEM_INFO
+        {
+            public ushort ProcessorArchitecture;
+            public ushort ProcessorLevel;
+            public ushort ProcessorRevision;
+            public byte NumberOfProcessors;
+            public byte ProductType;
+            public uint MajorVersion;
+            public uint MinorVersion;
+            public uint BuildNumber;
+            public uint PlatformId;
+            public uint CSDVersionRva;      // RVA to CSD version string
+            public ushort SuiteMask;
+            public ushort Reserved2;
+            public CPU_INFORMATION Cpu;
+        }
+
+        // CPU_INFORMATION union
+        [StructLayout(LayoutKind.Explicit, Pack = 4)]
+        public struct CPU_INFORMATION
+        {
+            // X86 CPU Info
+            [FieldOffset(0)]
+            public uint VendorId0;
+            [FieldOffset(4)]
+            public uint VendorId1;
+            [FieldOffset(8)]
+            public uint VendorId2;
+            [FieldOffset(12)]
+            public uint VersionInformation;
+            [FieldOffset(16)]
+            public uint FeatureInformation;
+            [FieldOffset(20)]
+            public uint AMDExtendedCpuFeatures;
+            
+            // Other CPU Info (x64, ARM, etc.)
+            [FieldOffset(0)]
+            public ulong ProcessorFeatures0;
+            [FieldOffset(8)]
+            public ulong ProcessorFeatures1;
+        }
+
+        // SystemInfoStream - Geçici veri toplama yapısı (eski uyumluluk için)
         [StructLayout(LayoutKind.Sequential)]
         public struct SystemInfoStream
         {
@@ -210,13 +255,11 @@ namespace WinEmuDump
             public uint MinorVersion;
             public uint BuildNumber;
             public uint PlatformId;
-            public uint UnknownField1;
-            public uint UnknownField2;
-            public IntPtr ProcessorFeatures;
-            public IntPtr ProcessorFeatures2;
-            public uint UnknownField3;
-            public ushort UnknownField14;
-            public byte UnknownField15;
+            public uint CSDVersionRva;
+            public ushort SuiteMask;
+            public ushort Reserved2;
+            public ulong ProcessorFeatures0;
+            public ulong ProcessorFeatures1;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 2)]
@@ -623,20 +666,59 @@ namespace WinEmuDump
 
         ///////////////// MODULE INFO STRUCT /////////////////
 
+        // VS_FIXEDFILEINFO - Version information
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct VS_FIXEDFILEINFO
+        {
+            public uint dwSignature;
+            public uint dwStrucVersion;
+            public uint dwFileVersionMS;
+            public uint dwFileVersionLS;
+            public uint dwProductVersionMS;
+            public uint dwProductVersionLS;
+            public uint dwFileFlagsMask;
+            public uint dwFileFlags;
+            public uint dwFileOS;
+            public uint dwFileType;
+            public uint dwFileSubtype;
+            public uint dwFileDateMS;
+            public uint dwFileDateLS;
+        }
+
+        // MINIDUMP_LOCATION_DESCRIPTOR - Generic location descriptor
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_LOCATION_DESCRIPTOR
+        {
+            public uint DataSize;
+            public uint Rva;
+        }
+
+        // MINIDUMP_MODULE - Correct minidump module structure
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_MODULE
+        {
+            public ulong BaseOfImage;
+            public uint SizeOfImage;
+            public uint CheckSum;
+            public uint TimeDateStamp;
+            public uint ModuleNameRva;
+            public VS_FIXEDFILEINFO VersionInfo;
+            public MINIDUMP_LOCATION_DESCRIPTOR CvRecord;
+            public MINIDUMP_LOCATION_DESCRIPTOR MiscRecord;
+            public ulong Reserved0;
+            public ulong Reserved1;
+        }
+
+        // ModuleInfo - Temporary structure for collecting module data
         [StructLayout(LayoutKind.Sequential)]
         public struct ModuleInfo
         {
             public IntPtr BaseAddress;
             public IntPtr Size;
             public uint Timestamp;
-            public IntPtr Checksum;
-            public IntPtr NumNames;
-            public IntPtr NumFunctions;
-            public IntPtr NumLines;
-            public IntPtr NumLines26;
-            public IntPtr NumLinesCV;
+            public uint Checksum;
             public uint ModuleNameRva;
-            public IntPtr ImageName;
+            public IntPtr ImageName;  // Temporary pointer for module name
         }
     }
 }

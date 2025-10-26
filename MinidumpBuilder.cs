@@ -35,10 +35,12 @@ namespace WinEmuDump
 
                 // Stream'leri hazırlama
                 List<MinidumpStream> streams = new List<MinidumpStream>();
+                int systemInfoStreamIndex = 0;
                 int handleStreamIndex = -1;
+                int moduleStreamIndex = -1;
 
-                // SystemInfo Stream
-                streams.Add(CreateSystemInfoStream(systemInfo));
+                // SystemInfo Stream (placeholder)
+                streams.Add(CreateSystemInfoStream(systemInfo, 0));
 
                 // ThreadList Stream
                 if (threadList.Count > 0)
@@ -53,10 +55,11 @@ namespace WinEmuDump
                     streams.Add(CreateHandleListStream(handleList, 0)); // Geçici RVA = 0
                 }
 
-                // ModuleList Stream
+                // ModuleList Stream (placeholder)
                 if (moduleList.Count > 0)
                 {
-                    streams.Add(CreateModuleListStream(moduleList));
+                    moduleStreamIndex = streams.Count;
+                    streams.Add(CreateModuleListStream(moduleList, 0)); // Geçici RVA = 0
                 }
 
                 // Memory64List Stream (Full memory)
@@ -90,11 +93,25 @@ namespace WinEmuDump
                         return false;
                     }
 
+                    // SystemInfo stream'i için RVA'ları düzelt
+                    if (i == systemInfoStreamIndex)
+                    {
+                        Console.WriteLine($"[DEBUG] SystemInfo stream RVA düzeltiliyor, base offset: 0x{currentOffset:X}");
+                        streams[i] = CreateSystemInfoStream(systemInfo, currentOffset);
+                    }
+                    
                     // Handle stream'i için RVA'ları düzelt
                     if (i == handleStreamIndex)
                     {
                         Console.WriteLine($"[DEBUG] Handle stream RVA düzeltiliyor, base offset: 0x{currentOffset:X}");
                         streams[i] = CreateHandleListStream(handleList, currentOffset);
+                    }
+                    
+                    // Module stream'i için RVA'ları düzelt
+                    if (i == moduleStreamIndex)
+                    {
+                        Console.WriteLine($"[DEBUG] Module stream RVA düzeltiliyor, base offset: 0x{currentOffset:X}");
+                        streams[i] = CreateModuleListStream(moduleList, currentOffset);
                     }
 
                     MinidumpStreamDirectoryEntry entry = new MinidumpStreamDirectoryEntry
@@ -137,26 +154,67 @@ namespace WinEmuDump
         }
 
         /// <summary>
-        /// SystemInfo stream'i oluşturur
+        /// SystemInfo stream'i oluşturur (DOĞRU MINIDUMP FORMATI)
         /// </summary>
-        private static MinidumpStream CreateSystemInfoStream(SystemInfoData systemInfo)
+        private static MinidumpStream CreateSystemInfoStream(SystemInfoData systemInfo, uint streamBaseRva = 0)
         {
-            SystemInfoStream stream = new SystemInfoStream
+            Console.WriteLine($"[DEBUG] SystemInfo stream oluşturuluyor");
+            Console.WriteLine($"[DEBUG] MINIDUMP_SYSTEM_INFO boyutu: {Marshal.SizeOf(typeof(MINIDUMP_SYSTEM_INFO))} bytes");
+            
+            List<byte> systemInfoData = new List<byte>();
+            
+            // 1. CSD Version string'i hazırla (boş ise varsayılan değer kullan)
+            string csdVersion = systemInfo.CSDVersion;
+            if (string.IsNullOrEmpty(csdVersion))
+            {
+                csdVersion = "Service Pack 0";
+            }
+            
+            byte[] csdVersionBytes = System.Text.Encoding.Unicode.GetBytes(csdVersion);
+            uint csdVersionLength = (uint)(csdVersionBytes.Length + 2); // +2 for null terminator
+            
+            // 2. CSDVersionRva hesapla (stream başından itibaren MINIDUMP_SYSTEM_INFO sonrası)
+            uint csdVersionRva = streamBaseRva + (uint)Marshal.SizeOf(typeof(MINIDUMP_SYSTEM_INFO));
+            
+            // 3. MINIDUMP_SYSTEM_INFO oluştur
+            MINIDUMP_SYSTEM_INFO sysInfo = new MINIDUMP_SYSTEM_INFO
             {
                 ProcessorArchitecture = systemInfo.ProcessorArchitecture,
                 ProcessorLevel = (ushort)systemInfo.ProcessorLevel,
                 ProcessorRevision = (ushort)systemInfo.ProcessorRevision,
                 NumberOfProcessors = systemInfo.ProcessorCount,
+                ProductType = 1, // VER_NT_WORKSTATION
                 MajorVersion = systemInfo.MajorVersion,
                 MinorVersion = systemInfo.MinorVersion,
                 BuildNumber = systemInfo.BuildNumber,
-                PlatformId = systemInfo.PlatformId
+                PlatformId = systemInfo.PlatformId,
+                CSDVersionRva = csdVersionRva,
+                SuiteMask = 0,
+                Reserved2 = 0,
+                Cpu = new CPU_INFORMATION
+                {
+                    ProcessorFeatures0 = 0,
+                    ProcessorFeatures1 = 0
+                }
             };
-
+            
+            // 4. MINIDUMP_SYSTEM_INFO struct'ını yaz
+            byte[] sysInfoBytes = StructToByteArray(sysInfo);
+            systemInfoData.AddRange(sysInfoBytes);
+            
+            // 5. CSD Version string'ini yaz (her zaman yaz)
+            systemInfoData.AddRange(BitConverter.GetBytes(csdVersionLength));
+            systemInfoData.AddRange(csdVersionBytes);
+            systemInfoData.AddRange(new byte[2]); // Null terminator
+            
+            Console.WriteLine($"[DEBUG] SystemInfo: Windows {systemInfo.MajorVersion}.{systemInfo.MinorVersion} Build {systemInfo.BuildNumber}");
+            Console.WriteLine($"[DEBUG] CSDVersion: '{csdVersion}' @ RVA=0x{csdVersionRva:X}");
+            Console.WriteLine($"[DEBUG] SystemInfo stream boyutu: {systemInfoData.Count} bytes");
+            
             return new MinidumpStream
             {
                 StreamType = MINIDUMP_STREAM_TYPE_SystemInfo,
-                Data = StructToByteArray(stream)
+                Data = systemInfoData.ToArray()
             };
         }
 
@@ -293,27 +351,121 @@ namespace WinEmuDump
                 Data = handleData.ToArray()
             };
         }
-
-        /// <summary>
-        /// ModuleList stream'i oluşturur
-        /// </summary>
-        private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList)
+/// <summary>
+/// ModuleList stream'i oluşturur (DOĞRU MINIDUMP FORMATI)
+/// </summary>
+private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList, uint streamBaseRva = 0)
+{
+    Console.WriteLine($"[DEBUG] ModuleList stream oluşturuluyor, modül sayısı: {moduleList.Count}");
+    Console.WriteLine($"[DEBUG] MINIDUMP_MODULE boyutu: {Marshal.SizeOf(typeof(MINIDUMP_MODULE))} bytes");
+    
+    List<byte> moduleData = new List<byte>();
+    
+    // 1. Modül sayısını yaz
+    moduleData.AddRange(BitConverter.GetBytes((uint)moduleList.Count));
+    
+    // 2. MINIDUMP_MODULE struct'larını ve string verilerini topla
+    List<MINIDUMP_MODULE> modules = new List<MINIDUMP_MODULE>();
+    List<byte> stringData = new List<byte>();
+    
+    // String offset'leri hesapla (stream başından itibaren)
+    // 4 bytes (count) + (moduleList.Count * sizeof(MINIDUMP_MODULE))
+    uint currentStringOffset = 4 + (uint)(moduleList.Count * Marshal.SizeOf(typeof(MINIDUMP_MODULE)));
+    
+    Console.WriteLine($"[DEBUG] String offset başlangıcı: 0x{currentStringOffset:X}");
+    
+    foreach (var moduleInfo in moduleList)
+    {
+        // ModuleName için string hazırla
+        string moduleName = "";
+        if (moduleInfo.ImageName != IntPtr.Zero)
         {
-            List<byte> moduleData = new List<byte>();
-            moduleData.AddRange(BitConverter.GetBytes((uint)moduleList.Count));
-
-            foreach (var moduleInfo in moduleList)
+            try
             {
-                moduleData.AddRange(StructToByteArray(moduleInfo));
+                moduleName = Marshal.PtrToStringUni(moduleInfo.ImageName) ?? "Unknown";
             }
-
-            return new MinidumpStream
+            catch
             {
-                StreamType = MINIDUMP_STREAM_TYPE_ModuleList,
-                Data = moduleData.ToArray()
-            };
+                moduleName = "Unknown";
+            }
         }
-
+        else
+        {
+            moduleName = "Unknown";
+        }
+        
+        // ModuleNameRva hesapla (dosyanın başından itibaren)
+        uint moduleNameRva = streamBaseRva + currentStringOffset;
+        
+        // MINIDUMP_STRING formatı: Length (4 bytes) + Unicode string + null terminator
+        byte[] moduleNameBytes = System.Text.Encoding.Unicode.GetBytes(moduleName);
+        uint moduleNameLength = (uint)(moduleNameBytes.Length + 2); // +2 for null terminator
+        
+        // String verisini ekle
+        stringData.AddRange(BitConverter.GetBytes(moduleNameLength));
+        stringData.AddRange(moduleNameBytes);
+        stringData.AddRange(new byte[2]); // Null terminator
+        
+        currentStringOffset += 4 + moduleNameLength;
+        
+        // MINIDUMP_MODULE oluştur (DOĞRU YAPIYLA)
+        MINIDUMP_MODULE module = new MINIDUMP_MODULE
+        {
+            BaseOfImage = (ulong)moduleInfo.BaseAddress.ToInt64(),
+            SizeOfImage = (uint)moduleInfo.Size.ToInt64(),
+            CheckSum = moduleInfo.Checksum,
+            TimeDateStamp = moduleInfo.Timestamp,
+            ModuleNameRva = moduleNameRva,
+            VersionInfo = new VS_FIXEDFILEINFO
+            {
+                dwSignature = 0xFEEF04BD,
+                dwStrucVersion = 0x00010000,
+                dwFileVersionMS = 0,
+                dwFileVersionLS = 0,
+                dwProductVersionMS = 0,
+                dwProductVersionLS = 0,
+                dwFileFlagsMask = 0,
+                dwFileFlags = 0,
+                dwFileOS = 0x00040004, // VOS_NT_WINDOWS32
+                dwFileType = 0x00000001, // VFT_APP
+                dwFileSubtype = 0,
+                dwFileDateMS = 0,
+                dwFileDateLS = 0
+            },
+            CvRecord = new MINIDUMP_LOCATION_DESCRIPTOR { DataSize = 0, Rva = 0 },
+            MiscRecord = new MINIDUMP_LOCATION_DESCRIPTOR { DataSize = 0, Rva = 0 },
+            Reserved0 = 0,
+            Reserved1 = 0
+        };
+        
+        modules.Add(module);
+        
+        Console.WriteLine($"[DEBUG] Modül: '{moduleName}' @ 0x{module.BaseOfImage:X}, NameRva=0x{moduleNameRva:X}");
+    }
+    
+    // 3. MINIDUMP_MODULE struct'larını yaz
+    foreach (var module in modules)
+    {
+        byte[] moduleBytes = StructToByteArray(module);
+        moduleData.AddRange(moduleBytes);
+        Console.WriteLine($"[DEBUG] MINIDUMP_MODULE yazıldı: BaseOfImage=0x{module.BaseOfImage:X}, Size={moduleBytes.Length} bytes");
+    }
+    
+    // 4. String verilerini yaz
+    moduleData.AddRange(stringData);
+    
+    Console.WriteLine($"[DEBUG] ModuleList stream boyutu: {moduleData.Count} bytes");
+    Console.WriteLine($"[DEBUG] - Header: 4 bytes");
+    Console.WriteLine($"[DEBUG] - Modules: {modules.Count * Marshal.SizeOf(typeof(MINIDUMP_MODULE))} bytes (her biri {Marshal.SizeOf(typeof(MINIDUMP_MODULE))} bytes)");
+    Console.WriteLine($"[DEBUG] - Strings: {stringData.Count} bytes");
+    Console.WriteLine($"[DEBUG] - Toplam: {moduleData.Count} bytes");
+    
+    return new MinidumpStream
+    {
+        StreamType = MINIDUMP_STREAM_TYPE_ModuleList,
+        Data = moduleData.ToArray()
+    };
+}
         /// <summary>
         /// Memory64List stream'i oluşturur (Full memory dump)
         /// </summary>
