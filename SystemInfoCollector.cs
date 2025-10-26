@@ -17,9 +17,10 @@ namespace WinEmuDump
         /// <summary>
         /// Sistem bilgilerini toplar
         /// </summary>
+        /// <param name="hProcess">Hedef işlemin handle'ı (architecture tespiti için)</param>
         /// <param name="systemInfo">Toplanan sistem bilgilerini içeren çıkış parametresi</param>
         /// <returns>Başarılı ise true, aksi halde false</returns>
-        public static bool CollectSystemInfo(out SystemInfoData systemInfo)
+        public static bool CollectSystemInfo(IntPtr hProcess, out SystemInfoData systemInfo)
         {
             systemInfo = new SystemInfoData();
 
@@ -59,10 +60,15 @@ namespace WinEmuDump
                 // Sistem bilgilerini al
                 SYSTEM_INFO sysInfo;
                 GetSystemInfo(out sysInfo);
-                systemInfo.ProcessorArchitecture = (ushort)sysInfo.wProcessorArchitecture;
+
+                // Gerçek processor architecture'ı tespit et
+                // Hedef process'in architecture'ını kontrol et
+                systemInfo.ProcessorArchitecture = SystemInfoCollector.DetectProcessArchitecture(hProcess);
                 systemInfo.ProcessorCount = (byte)sysInfo.dwNumberOfProcessors;
                 systemInfo.ProcessorLevel = sysInfo.wProcessorLevel;
                 systemInfo.ProcessorRevision = sysInfo.wProcessorRevision;
+
+                Console.WriteLine($"[DEBUG] ProcessorArchitecture tespit edildi: {systemInfo.ProcessorArchitecture} ({(systemInfo.ProcessorArchitecture == 9 ? "x64" : systemInfo.ProcessorArchitecture == 0 ? "x86" : "Unknown")})");
 
                 // Bellek bilgilerini al
                 if (CollectMemoryInfo(out SYSTEM_MEMORY_INFO memoryInfo))
@@ -82,6 +88,66 @@ namespace WinEmuDump
             {
                 Console.WriteLine($"[ERROR] Sistem bilgileri toplanamadı: {ex.Message}");
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Process'in gerçek architecture'ını tespit eder
+        /// </summary>
+        /// <param name="hProcess">Process handle'ı</param>
+        /// <returns>Processor architecture (9=x64, 0=x86)</returns>
+        public static ushort DetectProcessArchitecture(IntPtr hProcess)
+        {
+            try
+            {
+                // Önce sistem mimarisini kontrol et - Environment.Is64BitOperatingSystem daha güvenilir
+                bool isSystem64Bit = Environment.Is64BitOperatingSystem;
+
+                if (!isSystem64Bit)
+                {
+                    // Sistem 32-bit ise, process de 32-bit olur
+                    return 0; // PROCESSOR_ARCHITECTURE_INTEL = 0 (x86)
+                }
+
+                // Sistem 64-bit ise, process'in WOW64 altında çalışıp çalışmadığını kontrol et
+                bool isWow64;
+                if (IsWow64Process(hProcess, out isWow64))
+                {
+                    if (isWow64)
+                    {
+                        // Process WOW64 altında çalışıyor, yani x86 process x64 sistemde
+                        return 0; // PROCESSOR_ARCHITECTURE_INTEL = 0 (x86)
+                    }
+                    else
+                    {
+                        // Process WOW64 altında çalışmıyor, sistem x64 ise x64
+                        return 9; // PROCESSOR_ARCHITECTURE_AMD64 = 9 (x64)
+                    }
+                }
+                else
+                {
+                    // IsWow64Process başarısız oldu, fallback olarak sistem mimarisi
+                    // Sistem x64 ise ve process WOW64 altında değilse x64 varsay
+                    Console.WriteLine("[WARNING] IsWow64Process failed, assuming x64 for 64-bit system");
+                    return 9; // x64 varsay
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WARNING] Process architecture detection failed: {ex.Message}");
+                // En son çare: Environment.Is64BitOperatingSystem kullan
+                try
+                {
+                    bool isSystem64Bit = Environment.Is64BitOperatingSystem;
+                    return isSystem64Bit ? (ushort)9 : (ushort)0;
+                }
+                catch
+                {
+                    // Son fallback: Sistem bilgilerini kullan
+                    SYSTEM_INFO sysInfo;
+                    GetSystemInfo(out sysInfo);
+                    return (ushort)sysInfo.wProcessorArchitecture;
+                }
             }
         }
 

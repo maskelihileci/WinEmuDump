@@ -887,6 +887,23 @@ namespace WinEmuDump
             // MINIDUMP_THREAD_EX entries follow
         }
 
+        // MINIDUMP_MISC_INFO_2 - Misc info for minidump (Windows XP+)
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_MISC_INFO_2
+        {
+            public uint SizeOfInfo;
+            public uint Flags1;
+            public uint ProcessId;
+            public uint ProcessCreateTime;
+            public uint ProcessUserTime;
+            public uint ProcessKernelTime;
+            public uint ProcessorMaxMhz;
+            public uint ProcessorCurrentMhz;
+            public uint ProcessorMhzLimit;
+            public uint ProcessorMaxIdleState;
+            public uint ProcessorCurrentIdleState;
+        }
+
         // MINIDUMP_MISC_INFO_4 - Extended misc info for minidump (Windows Vista+)
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 4)]
         public struct MINIDUMP_MISC_INFO_4

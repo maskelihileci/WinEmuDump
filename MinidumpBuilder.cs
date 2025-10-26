@@ -832,6 +832,34 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
                 DbgBldStr = dbgBldStr
             };
 
+            // Eğer parsing problemi varsa MINIDUMP_MISC_INFO_2 kullan (Windows XP uyumlu)
+            // SizeOfInfo'a göre hangi struct kullanılacağını belirle
+            byte[] miscData;
+            if (miscInfo4.SizeOfInfo == (uint)Marshal.SizeOf(typeof(Win32.MINIDUMP_MISC_INFO_2)))
+            {
+                // MINIDUMP_MISC_INFO_2 kullan (sadece temel bilgiler)
+                var miscInfo2 = new Win32.MINIDUMP_MISC_INFO_2
+                {
+                    SizeOfInfo = (uint)Marshal.SizeOf(typeof(Win32.MINIDUMP_MISC_INFO_2)),
+                    Flags1 = 0x00000002, // PROCESS_ID | PROCESS_TIMES
+                    ProcessId = processInfo.ProcessId,
+                    ProcessCreateTime = (uint)(processInfo.CreateTime.ToInt64() & 0xFFFFFFFF),
+                    ProcessUserTime = processUserTime,
+                    ProcessKernelTime = processKernelTime,
+                    ProcessorMaxMhz = processorMaxMhz,
+                    ProcessorCurrentMhz = processorCurrentMhz,
+                    ProcessorMhzLimit = processorMhzLimit,
+                    ProcessorMaxIdleState = 1,
+                    ProcessorCurrentIdleState = 1
+                };
+                miscData = StructToByteArray(miscInfo2);
+            }
+            else
+            {
+                // MINIDUMP_MISC_INFO_4 kullan (tam özellikler)
+                miscData = StructToByteArray(miscInfo4);
+            }
+
             Console.WriteLine($"[DEBUG] MiscInfo oluşturuldu:");
             Console.WriteLine($"  - ProcessId: {miscInfo4.ProcessId}");
             Console.WriteLine($"  - ProcessCreateTime: {miscInfo4.ProcessCreateTime}");
@@ -844,7 +872,7 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
             return new MinidumpStream
             {
                 StreamType = MINIDUMP_STREAM_TYPE_MiscInfo,
-                Data = StructToByteArray(miscInfo4)
+                Data = miscData
             };
         }
 

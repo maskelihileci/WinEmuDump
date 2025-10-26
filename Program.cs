@@ -213,7 +213,7 @@ namespace WinEmuDump
                 // Sistem bilgilerini topla
                 Console.WriteLine("[INFO] Sistem bilgileri toplanıyor...");
                 SystemInfoData systemInfo;
-                if (!CollectSystemInfo(out systemInfo))
+                if (!CollectSystemInfo(processHandle, out systemInfo))
                 {
                     Console.WriteLine("[WARNING] Sistem bilgileri toplanamadı, devam ediliyor...");
                 }
