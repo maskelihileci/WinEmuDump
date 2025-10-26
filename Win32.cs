@@ -321,18 +321,36 @@ namespace WinEmuDump
             public IntPtr UnknownField11;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        public struct Memory64Info
+        // MINIDUMP_MEMORY_DESCRIPTOR64 - Correct structure for Memory64List
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_MEMORY_DESCRIPTOR64
         {
-            public IntPtr Address;
-            public IntPtr Size;
+            public UInt64 StartOfMemoryRange;
+            public UInt64 DataSize;
         }
 
+        // Memory64Info - Backward compatibility structure
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct Memory64Info
+        {
+            public ulong StartOfMemoryRange;
+            public MINIDUMP_LOCATION_DESCRIPTOR Memory;
+        }
+
+        // Memory64ListStream - Backward compatibility structure
         [StructLayout(LayoutKind.Sequential)]
         public struct Memory64ListStream
         {
             public ulong NumberOfEntries;
             public uint MemoryRegionsBaseAddress;
+        }
+
+        // MINIDUMP_MEMORY64_LIST - Correct structure for Memory64List stream
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_MEMORY64_LIST
+        {
+            public UInt64 NumberOfMemoryRanges;
+            public UInt64 BaseRva;
         }
 
         ///////////////// EXTENDED STRUCTS FOR ADVANCED MINIDUMP /////////////////
@@ -632,7 +650,7 @@ namespace WinEmuDump
             public uint PriorityClass;
             public uint Priority;
             public IntPtr Teb;
-            public Memory64Info Stack;
+            public MINIDUMP_MEMORY_DESCRIPTOR Stack;
             public CONTEXT Context;
         }
 

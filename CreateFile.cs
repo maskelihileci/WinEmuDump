@@ -41,7 +41,7 @@ namespace WinEmuDump
         /// Yeni kod için MinidumpBuilder.BuildAdvancedMinidump kullanın
         /// </summary>
         [Obsolete("Bu fonksiyon artık kullanılmıyor. MinidumpBuilder.BuildAdvancedMinidump kullanın.")]
-        public static void CreateMinidump(IntPtr lsasrvdll_address, int lsasrvdll_size, List<Memory64Info> mem64info_List, byte[] memoryRegions_byte_arr, string dumpfile)
+        public static void CreateMinidump(IntPtr lsasrvdll_address, int lsasrvdll_size, List<Win32.MINIDUMP_MEMORY_DESCRIPTOR64> mem64info_List, byte[] memoryRegions_byte_arr, string dumpfile)
         {
             Console.WriteLine("[WARNING] CreateMinidump fonksiyonu artık kullanılmıyor.");
             Console.WriteLine("[INFO] Yeni gelişmiş minidump sistemi kullanılıyor...");
@@ -81,7 +81,7 @@ namespace WinEmuDump
                 entries[2] = new MinidumpStreamDirectoryEntry
                 {
                     StreamType = MINIDUMP_STREAM_TYPE_Memory64List,
-                    Size = (uint)(Marshal.SizeOf(typeof(Memory64ListStream)) + mem64info_List.Count * Marshal.SizeOf(typeof(Memory64Info))),
+                    Size = (uint)(Marshal.SizeOf(typeof(Win32.MINIDUMP_MEMORY64_LIST)) + mem64info_List.Count * Marshal.SizeOf(typeof(Win32.MINIDUMP_MEMORY_DESCRIPTOR64))),
                     Location = entries[1].Location + entries[1].Size
                 };
 
@@ -114,9 +114,9 @@ namespace WinEmuDump
                 };
 
                 // Memory64List oluştur
-                Memory64ListStream memory64ListStream = new Memory64ListStream
+                Win32.Memory64ListStream memory64ListStream = new Win32.Memory64ListStream
                 {
-                    NumberOfEntries = (ulong)mem64info_List.Count,
+                    NumberOfEntries = (uint)mem64info_List.Count,
                     MemoryRegionsBaseAddress = (uint)(entries[2].Location + entries[2].Size + memoryRegions_byte_arr.Length - (16 + 16 * mem64info_List.Count))
                 };
 
@@ -136,11 +136,11 @@ namespace WinEmuDump
                     ms.Write(StructToByteArray(systemInfoStream), 0, Marshal.SizeOf(typeof(SystemInfoStream)));
                     ms.Write(StructToByteArray(moduleListStream), 0, Marshal.SizeOf(typeof(ModuleListStream)));
                     ms.Write(StructToByteArray(dllName), 0, Marshal.SizeOf(typeof(CUSTOM_UNICODE_STRING)));
-                    ms.Write(StructToByteArray(memory64ListStream), 0, Marshal.SizeOf(typeof(Memory64ListStream)));
+                    ms.Write(StructToByteArray(memory64ListStream), 0, Marshal.SizeOf(typeof(Win32.Memory64ListStream)));
 
                     foreach (var memInfo in mem64info_List)
                     {
-                        ms.Write(StructToByteArray(memInfo), 0, Marshal.SizeOf(typeof(Memory64Info)));
+                        ms.Write(StructToByteArray(memInfo), 0, Marshal.SizeOf(typeof(Win32.MINIDUMP_MEMORY_DESCRIPTOR64)));
                     }
 
                     // Memory data
