@@ -20,13 +20,13 @@ namespace WinEmuDump
         /// </summary>
         /// <param name="hProcess">Hedef işlemin handle'ı</param>
         /// <param name="processInfo">İşlem bilgileri</param>
-        /// <param name="threadList">Thread bilgileri listesi</param>
+        /// <param name="threadList">Gelişmiş thread bilgileri listesi</param>
         /// <param name="handleList">Handle bilgileri listesi</param>
         /// <param name="moduleList">Modül bilgileri listesi</param>
         /// <param name="systemInfo">Sistem bilgileri</param>
         /// <param name="outputPath">Çıktı dosyası yolu</param>
         /// <returns>Başarılı ise true, aksi halde false</returns>
-        public static bool BuildAdvancedMinidump(IntPtr hProcess, ProcessInfoData processInfo, List<ThreadInfo> threadList,
+        public static bool BuildAdvancedMinidump(IntPtr hProcess, ProcessInfoData processInfo, List<MinidumpThreadInfo> threadList,
             List<HandleInfo> handleList, List<ModuleInfo> moduleList, SystemInfoData systemInfo, string outputPath)
         {
             try
@@ -38,6 +38,8 @@ namespace WinEmuDump
                 int systemInfoStreamIndex = 0;
                 int handleStreamIndex = -1;
                 int moduleStreamIndex = -1;
+                int threadListStreamIndex = -1;
+                int exceptionStreamIndex = -1;
 
                 // SystemInfo Stream (placeholder)
                 streams.Add(CreateSystemInfoStream(systemInfo, 0));
@@ -45,7 +47,16 @@ namespace WinEmuDump
                 // ThreadList Stream
                 if (threadList.Count > 0)
                 {
-                    streams.Add(CreateThreadListStream(threadList));
+                    threadListStreamIndex = streams.Count;
+                    streams.Add(CreateThreadListStream(threadList, 0)); // Geçici RVA = 0
+                }
+
+                // Exception Stream (varsa)
+                uint threadIdForException = threadList.Count > 0 ? threadList[0].ThreadId : 0; // İlk thread'i kullan
+                if (threadIdForException != 0)
+                {
+                    exceptionStreamIndex = streams.Count;
+                    streams.Add(CreateExceptionStream(threadIdForException, 0)); // Geçici RVA = 0
                 }
 
                 // HandleList Stream (placeholder)
@@ -112,6 +123,21 @@ namespace WinEmuDump
                     {
                         Console.WriteLine($"[DEBUG] Module stream RVA düzeltiliyor, base offset: 0x{currentOffset:X}");
                         streams[i] = CreateModuleListStream(moduleList, currentOffset);
+                    }
+
+                    // ThreadList stream'i için RVA'ları düzelt
+                    if (i == threadListStreamIndex)
+                    {
+                        Console.WriteLine($"[DEBUG] ThreadList stream RVA düzeltiliyor, base offset: 0x{currentOffset:X}");
+                        streams[i] = CreateThreadListStream(threadList, currentOffset);
+                    }
+
+                    // Exception stream'i için RVA'ları düzelt
+                    if (i == exceptionStreamIndex)
+                    {
+                        Console.WriteLine($"[DEBUG] Exception stream RVA düzeltiliyor, base offset: 0x{currentOffset:X}");
+                        uint threadIdForExceptionFix = threadList.Count > 0 ? threadList[0].ThreadId : 0;
+                        streams[i] = CreateExceptionStream(threadIdForExceptionFix, currentOffset);
                     }
 
                     MinidumpStreamDirectoryEntry entry = new MinidumpStreamDirectoryEntry
@@ -219,17 +245,82 @@ namespace WinEmuDump
         }
 
         /// <summary>
-        /// ThreadList stream'i oluşturur
+        /// ThreadList stream'i oluşturur (MINIDUMP_THREAD formatında - DOĞRU FORMAT)
         /// </summary>
-        private static MinidumpStream CreateThreadListStream(List<ThreadInfo> threadList)
+        private static MinidumpStream CreateThreadListStream(List<MinidumpThreadInfo> threadList, uint streamBaseRva = 0)
         {
+            Console.WriteLine($"[DEBUG] ThreadList stream oluşturuluyor, thread sayısı: {threadList.Count}");
+            Console.WriteLine($"[DEBUG] MINIDUMP_THREAD boyutu: {Marshal.SizeOf(typeof(MINIDUMP_THREAD))} bytes");
+            Console.WriteLine($"[DEBUG] MINIDUMP_THREAD_LIST boyutu: {Marshal.SizeOf(typeof(MINIDUMP_THREAD_LIST))} bytes");
+
             List<byte> threadData = new List<byte>();
-            threadData.AddRange(BitConverter.GetBytes((uint)threadList.Count));
+
+            // 1. MINIDUMP_THREAD_LIST header yaz
+            MINIDUMP_THREAD_LIST threadListHeader = new MINIDUMP_THREAD_LIST
+            {
+                NumberOfThreads = (uint)threadList.Count
+            };
+            byte[] headerBytes = StructToByteArray(threadListHeader);
+            threadData.AddRange(headerBytes);
+
+            Console.WriteLine($"[DEBUG] ThreadList header yazıldı: {headerBytes.Length} bytes");
+
+            // 2. MINIDUMP_THREAD struct'larını ve CONTEXT verilerini topla
+            List<byte> contextData = new List<byte>();
+
+            // Context offset'leri hesapla (stream başından itibaren)
+            uint currentContextOffset = (uint)threadData.Count + (uint)(threadList.Count * Marshal.SizeOf(typeof(MINIDUMP_THREAD)));
 
             foreach (var threadInfo in threadList)
             {
-                threadData.AddRange(StructToByteArray(threadInfo));
+                // Context RVA hesapla (dosyanın başından itibaren)
+                uint contextRva = streamBaseRva + currentContextOffset;
+
+                // MINIDUMP_THREAD oluştur
+                MINIDUMP_THREAD thread = new MINIDUMP_THREAD
+                {
+                    ThreadId = threadInfo.ThreadId,
+                    SuspendCount = 1, // Suspended durumda
+                    PriorityClass = 0, // Bilinmiyor
+                    Priority = 0, // Bilinmiyor
+                    Teb = threadInfo.TebAddress,
+                    Stack = new MINIDUMP_MEMORY_DESCRIPTOR
+                    {
+                        StartOfMemoryRange = threadInfo.StackBase,
+                        Memory = new MINIDUMP_LOCATION_DESCRIPTOR
+                        {
+                            DataSize = threadInfo.StackSize,
+                            Rva = 0 // Memory64List'te olacak
+                        }
+                    },
+                    ThreadContext = new MINIDUMP_LOCATION_DESCRIPTOR
+                    {
+                        DataSize = (uint)Marshal.SizeOf(typeof(CONTEXT)),
+                        Rva = contextRva
+                    }
+                };
+
+                // MINIDUMP_THREAD struct'ını yaz
+                byte[] threadBytes = StructToByteArray(thread);
+                threadData.AddRange(threadBytes);
+
+                // CONTEXT verisini ekle
+                byte[] contextBytes = StructToByteArray(threadInfo.Context);
+                contextData.AddRange(contextBytes);
+
+                currentContextOffset += (uint)Marshal.SizeOf(typeof(CONTEXT));
+
+                Console.WriteLine($"[DEBUG] Thread {threadInfo.ThreadId}: TEB=0x{threadInfo.TebAddress:X}, Stack=0x{threadInfo.StackBase:X} ({threadInfo.StackSize} bytes), ContextRVA=0x{contextRva:X}");
             }
+
+            // 3. Context verilerini yaz
+            threadData.AddRange(contextData);
+
+            Console.WriteLine($"[DEBUG] ThreadList stream boyutu: {threadData.Count} bytes");
+            Console.WriteLine($"[DEBUG] - Header: {headerBytes.Length} bytes");
+            Console.WriteLine($"[DEBUG] - Threads: {threadList.Count * Marshal.SizeOf(typeof(MINIDUMP_THREAD))} bytes");
+            Console.WriteLine($"[DEBUG] - Contexts: {contextData.Count} bytes");
+            Console.WriteLine($"[DEBUG] - Toplam: {threadData.Count} bytes");
 
             return new MinidumpStream
             {
@@ -641,6 +732,57 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
             {
                 StreamType = MINIDUMP_STREAM_TYPE_MiscInfo,
                 Data = StructToByteArray(miscInfo)
+            };
+        }
+
+        /// <summary>
+        /// Exception stream'i oluşturur (MINIDUMP_EXCEPTION_STREAM formatında)
+        /// </summary>
+        private static MinidumpStream CreateExceptionStream(uint exceptionThreadId, uint streamBaseRva = 0)
+        {
+            Console.WriteLine($"[DEBUG] Exception stream oluşturuluyor, thread ID: {exceptionThreadId}");
+
+            // Basit bir exception oluştur (örnek amaçlı)
+            MINIDUMP_EXCEPTION exception = new MINIDUMP_EXCEPTION
+            {
+                ExceptionCode = 0xC0000005, // STATUS_ACCESS_VIOLATION
+                ExceptionFlags = 0,
+                ExceptionRecord = 0,
+                ExceptionAddress = 0x0000000000000000, // Bilinmiyor
+                NumberParameters = 0,
+                __unusedAlignment = 0,
+                ExceptionInformation = new ulong[15] // Boş parametreler
+            };
+
+            // Exception RVA hesapla (CONTEXT için)
+            uint exceptionContextRva = streamBaseRva + (uint)Marshal.SizeOf(typeof(MINIDUMP_EXCEPTION_STREAM));
+
+            MINIDUMP_EXCEPTION_STREAM exceptionStream = new MINIDUMP_EXCEPTION_STREAM
+            {
+                ThreadId = exceptionThreadId,
+                __alignment = 0,
+                ExceptionRecord = exception,
+                ThreadContext = new MINIDUMP_LOCATION_DESCRIPTOR
+                {
+                    DataSize = (uint)Marshal.SizeOf(typeof(CONTEXT)),
+                    Rva = exceptionContextRva
+                }
+            };
+
+            // Boş CONTEXT ekle (exception anındaki register durumu bilinmiyor)
+            CONTEXT emptyContext = new CONTEXT { ContextFlags = 0x10001F };
+
+            List<byte> exceptionData = new List<byte>();
+            exceptionData.AddRange(StructToByteArray(exceptionStream));
+            exceptionData.AddRange(StructToByteArray(emptyContext));
+
+            Console.WriteLine($"[DEBUG] Exception stream boyutu: {exceptionData.Count} bytes");
+            Console.WriteLine($"[DEBUG] Exception: Code=0x{exception.ExceptionCode:X}, Address=0x{exception.ExceptionAddress:X}");
+
+            return new MinidumpStream
+            {
+                StreamType = MINIDUMP_STREAM_TYPE_Exception,
+                Data = exceptionData.ToArray()
             };
         }
 

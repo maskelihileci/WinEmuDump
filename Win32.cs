@@ -12,6 +12,7 @@ namespace WinEmuDump
         public const uint PROCESS_QUERY_INFORMATION = 0x0400;
         public const uint PROCESS_VM_READ = 0x0010;
         public const uint PROCESS_DUP_HANDLE = 0x0040;
+        public const uint PROCESS_VM_OPERATION = 0x0008;
         public const uint MemoryBasicInformation = 0;
         public const uint TOKEN_ADJUST_PRIVILEGES = 0x00000020;
         public const uint TOKEN_QUERY = 0x00000008;
@@ -403,30 +404,66 @@ namespace WinEmuDump
             public uint GenericAll;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
+        // CONTEXT yapı sabitleri
+        public const uint CONTEXT_AMD64 = 0x100000;
+        public const uint CONTEXT_CONTROL = (CONTEXT_AMD64 | 0x1);
+        public const uint CONTEXT_INTEGER = (CONTEXT_AMD64 | 0x2);
+        public const uint CONTEXT_SEGMENTS = (CONTEXT_AMD64 | 0x4);
+        public const uint CONTEXT_FLOATING_POINT = (CONTEXT_AMD64 | 0x8);
+        public const uint CONTEXT_DEBUG_REGISTERS = (CONTEXT_AMD64 | 0x10);
+        public const uint CONTEXT_FULL = (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT);
+
+        [StructLayout(LayoutKind.Sequential, Pack = 16)]
         public struct CONTEXT
         {
-            // ContextFlags must be first
+            //
+            // Register parameter home addresses.
+            //
+            // N.B. These fields are for convience - they could be used to extend the
+            //      context record in the future.
+            //
+
+            public ulong P1Home;
+            public ulong P2Home;
+            public ulong P3Home;
+            public ulong P4Home;
+            public ulong P5Home;
+            public ulong P6Home;
+
+            //
+            // Control flags.
+            //
+
             public uint ContextFlags;
+            public uint MxCsr;
 
+            //
+            // Segment Registers and processor flags.
+            //
+
+            public ushort SegCs;
+            public ushort SegDs;
+            public ushort SegEs;
+            public ushort SegFs;
+            public ushort SegGs;
+            public ushort SegSs;
+            public uint EFlags;
+
+            //
             // Debug registers
-            public uint Dr0;
-            public uint Dr1;
-            public uint Dr2;
-            public uint Dr3;
-            public uint Dr6;
-            public uint Dr7;
+            //
 
-            // Float save area
-            public FLOATING_SAVE_AREA FloatSave;
+            public ulong Dr0;
+            public ulong Dr1;
+            public ulong Dr2;
+            public ulong Dr3;
+            public ulong Dr6;
+            public ulong Dr7;
 
-            // Segment registers
-            public uint SegGs;
-            public uint SegFs;
-            public uint SegEs;
-            public uint SegDs;
+            //
+            // Integer registers.
+            //
 
-            // General purpose registers (x64)
             public ulong Rax;
             public ulong Rcx;
             public ulong Rdx;
@@ -444,11 +481,22 @@ namespace WinEmuDump
             public ulong R14;
             public ulong R15;
 
-            // Instruction pointer
+            //
+            // Program counter.
+            //
+
             public ulong Rip;
 
-            // Floating point state
-            public XSAVE_FORMAT DUMMYUNIONNAME;
+            //
+            // Floating point state.
+            //
+
+            public XSAVE_FORMAT FltSave;
+
+            //
+            // Vector registers.
+            //
+
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 26)]
             public M128A[] VectorRegister;
             public ulong VectorControl;
@@ -719,6 +767,83 @@ namespace WinEmuDump
             public uint Checksum;
             public uint ModuleNameRva;
             public IntPtr ImageName;  // Temporary pointer for module name
+        }
+
+        ///////////////// THREAD & EXCEPTION STRUCTS /////////////////
+
+        // MINIDUMP_MEMORY_DESCRIPTOR - Memory region descriptor
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_MEMORY_DESCRIPTOR
+        {
+            public ulong StartOfMemoryRange;
+            public MINIDUMP_LOCATION_DESCRIPTOR Memory;
+        }
+
+        // MINIDUMP_THREAD - Thread information for minidump
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_THREAD
+        {
+            public uint ThreadId;
+            public uint SuspendCount;
+            public uint PriorityClass;
+            public uint Priority;
+            public ulong Teb;
+            public MINIDUMP_MEMORY_DESCRIPTOR Stack;
+            public MINIDUMP_LOCATION_DESCRIPTOR ThreadContext;
+        }
+
+        // MINIDUMP_THREAD_EX - Extended thread information (Windows Vista+)
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_THREAD_EX
+        {
+            public uint ThreadId;
+            public uint SuspendCount;
+            public uint PriorityClass;
+            public uint Priority;
+            public ulong Teb;
+            public MINIDUMP_MEMORY_DESCRIPTOR Stack;
+            public MINIDUMP_LOCATION_DESCRIPTOR ThreadContext;
+            public MINIDUMP_LOCATION_DESCRIPTOR BackingStore;
+        }
+
+        // MINIDUMP_EXCEPTION - Exception information
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_EXCEPTION
+        {
+            public uint ExceptionCode;
+            public uint ExceptionFlags;
+            public ulong ExceptionRecord;
+            public ulong ExceptionAddress;
+            public uint NumberParameters;
+            public uint __unusedAlignment;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 15)]
+            public ulong[] ExceptionInformation;
+        }
+
+        // MINIDUMP_EXCEPTION_STREAM - Exception stream for minidump
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_EXCEPTION_STREAM
+        {
+            public uint ThreadId;
+            public uint __alignment;
+            public MINIDUMP_EXCEPTION ExceptionRecord;
+            public MINIDUMP_LOCATION_DESCRIPTOR ThreadContext;
+        }
+
+        // MINIDUMP_THREAD_LIST - Thread list stream header
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_THREAD_LIST
+        {
+            public uint NumberOfThreads;
+            // MINIDUMP_THREAD entries follow
+        }
+
+        // MINIDUMP_THREAD_EX_LIST - Extended thread list stream header
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_THREAD_EX_LIST
+        {
+            public uint NumberOfThreads;
+            // MINIDUMP_THREAD_EX entries follow
         }
     }
 }

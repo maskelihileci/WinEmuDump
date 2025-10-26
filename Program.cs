@@ -200,7 +200,7 @@ namespace WinEmuDump
             };
             OBJECT_ATTRIBUTES objAttr = new OBJECT_ATTRIBUTES();
 
-            uint ntstatus = NtOpenProcess(ref processHandle, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_DUP_HANDLE, ref objAttr, ref client_id);
+            uint ntstatus = NtOpenProcess(ref processHandle, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_DUP_HANDLE | PROCESS_VM_OPERATION, ref objAttr, ref client_id);
             if (ntstatus != 0)
             {
                 Console.WriteLine($"[-] NtOpenProcess hatası. NTSTATUS: 0x{ntstatus:X}");
@@ -229,10 +229,32 @@ namespace WinEmuDump
 
                 // Thread bilgilerini topla
                 Console.WriteLine("[INFO] Thread bilgileri toplanıyor...");
-                List<ThreadInfo> threadList = new List<ThreadInfo>();
-                if (!CollectThreadInformation(processHandle, out threadList))
+                List<MinidumpThreadInfo> threadList = new List<MinidumpThreadInfo>();
+                if (!ThreadCollector.CollectAdvancedThreadInformation(processHandle, out threadList))
                 {
-                    Console.WriteLine("[WARNING] Thread bilgileri toplanamadı");
+                    Console.WriteLine("[WARNING] Thread bilgileri toplanamadı - eski yöntem kullanılıyor");
+                    // Fallback: Eski thread toplama yöntemini kullan
+                    List<ThreadInfo> oldThreadList = new List<ThreadInfo>();
+                    if (ThreadCollector.CollectThreadInformation(processHandle, out oldThreadList))
+                    {
+                        Console.WriteLine($"[INFO] Eski yöntemle {oldThreadList.Count} thread bulundu");
+                        // Eski ThreadInfo'yu MinidumpThreadInfo'ya çevir (şimdilik TEB=0, Stack=0 ile)
+                        foreach (var oldThread in oldThreadList)
+                        {
+                            threadList.Add(new MinidumpThreadInfo
+                            {
+                                ThreadId = oldThread.ThreadId,
+                                TebAddress = 0, // Bilinmiyor
+                                StackBase = 0,  // Bilinmiyor
+                                StackSize = 0,  // Bilinmiyor
+                                Context = new CONTEXT() // Boş context
+                            });
+                        }
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"[INFO] Gelişmiş yöntemle {threadList.Count} thread bulundu");
                 }
 
                 // Handle bilgilerini topla
@@ -261,7 +283,8 @@ namespace WinEmuDump
                     Console.WriteLine($"[SUCCESS] Gelişmiş minidump başarıyla oluşturuldu: {dumpfile}");
                     Console.WriteLine("[INFO] İçerik:");
                     Console.WriteLine($"  - SystemInfo: ✓");
-                    Console.WriteLine($"  - ThreadList: {threadList.Count} thread");
+                    Console.WriteLine($"  - ThreadList: {threadList.Count} thread (TEB + Stack + Context)");
+                    Console.WriteLine($"  - Exception: ✓ (varsa)");
                     Console.WriteLine($"  - HandleList: {handleList.Count} handle");
                     Console.WriteLine($"  - ModuleList: {moduleList.Count} modül");
                     Console.WriteLine($"  - Memory64List: Full memory dump");
