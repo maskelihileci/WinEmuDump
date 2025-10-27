@@ -203,18 +203,15 @@ namespace WinEmuDump
             
             List<byte> systemInfoData = new List<byte>();
             
-            // 1. CSD Version string'i hazırla (boş ise varsayılan değer kullan)
+            // 1. CSD Version string'i hazırla
             string csdVersion = systemInfo.CSDVersion;
+            uint csdVersionRva = streamBaseRva + (uint)Marshal.SizeOf(typeof(MINIDUMP_SYSTEM_INFO)); // Her zaman RVA hesapla
+
             if (string.IsNullOrEmpty(csdVersion))
             {
-                csdVersion = "Service Pack 0";
+                // CSDVersion boşsa, boş string kullan (ama RVA geçerli tut)
+                csdVersion = "";
             }
-            
-            byte[] csdVersionBytes = System.Text.Encoding.Unicode.GetBytes(csdVersion);
-            uint csdVersionLength = (uint)(csdVersionBytes.Length + 2); // +2 for null terminator
-            
-            // 2. CSDVersionRva hesapla (stream başından itibaren MINIDUMP_SYSTEM_INFO sonrası)
-            uint csdVersionRva = streamBaseRva + (uint)Marshal.SizeOf(typeof(MINIDUMP_SYSTEM_INFO));
             
             // 3. MINIDUMP_SYSTEM_INFO oluştur
             MINIDUMP_SYSTEM_INFO sysInfo = new MINIDUMP_SYSTEM_INFO
@@ -241,11 +238,24 @@ namespace WinEmuDump
             // 4. MINIDUMP_SYSTEM_INFO struct'ını yaz
             byte[] sysInfoBytes = StructToByteArray(sysInfo);
             systemInfoData.AddRange(sysInfoBytes);
-            
-            // 5. CSD Version string'ini yaz (her zaman yaz)
-            systemInfoData.AddRange(BitConverter.GetBytes(csdVersionLength));
-            systemInfoData.AddRange(csdVersionBytes);
-            systemInfoData.AddRange(new byte[2]); // Null terminator
+
+            // 5. CSD Version string'ini yaz (her zaman RVA geçerli olduğundan)
+            if (!string.IsNullOrEmpty(csdVersion))
+            {
+                // CSDVersion varsa normal şekilde yaz
+                byte[] csdVersionBytes = System.Text.Encoding.Unicode.GetBytes(csdVersion);
+                uint csdVersionLength = (uint)(csdVersionBytes.Length + 2); // +2 for null terminator
+
+                systemInfoData.AddRange(BitConverter.GetBytes(csdVersionLength));
+                systemInfoData.AddRange(csdVersionBytes);
+                systemInfoData.AddRange(new byte[2]); // Null terminator
+            }
+            else
+            {
+                // CSDVersion boşsa, length=0 ve hiç içerik yazma
+                systemInfoData.AddRange(BitConverter.GetBytes((uint)0));
+                // Hiç içerik veya null terminator ekleme
+            }
             
             Console.WriteLine($"[DEBUG] SystemInfo: Windows {systemInfo.MajorVersion}.{systemInfo.MinorVersion} Build {systemInfo.BuildNumber}");
             Console.WriteLine($"[DEBUG] CSDVersion: '{csdVersion}' @ RVA=0x{csdVersionRva:X}");
@@ -894,6 +904,11 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
                             buildString += $".{ubr}";
                         }
                     }
+                    else
+                    {
+                        // Registry'den alınamadıysa, ProductName kullanma
+                        buildString = "";
+                    }
 
                     object buildLab = key.GetValue("BuildLab");
                     if (buildLab != null)
@@ -909,9 +924,9 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
             }
             catch
             {
-                // Registry erişim hatası durumunda varsayılan değerler
-                buildString = "Windows 10 Build 19045";
-                dbgBldStr = "19041.1.amd64fre.vb_release.191206-1406";
+                // Registry erişim hatası durumunda varsayılan değerler - Boş bırak
+                buildString = "";
+                dbgBldStr = "";
             }
 
             var miscInfo4 = new Win32.MINIDUMP_MISC_INFO_4

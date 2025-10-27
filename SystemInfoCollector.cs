@@ -26,35 +26,65 @@ namespace WinEmuDump
 
             try
             {
-                // İşletim sistemi sürüm bilgilerini al
-                OSVERSIONINFOEX osVersion = new OSVERSIONINFOEX();
-                osVersion.dwOSVersionInfoSize = Marshal.SizeOf(typeof(OSVERSIONINFOEX));
-                if (RtlGetVersion(ref osVersion) != 0)
+                // İşletim sistemi sürüm bilgilerini al - Windows Registry kullanarak (gerçek API yaklaşımı)
+                try
                 {
-                    Console.WriteLine("[WARNING] RtlGetVersion başarısız, varsayılan değerler kullanılıyor");
-                    // Varsayılan değerler (Windows 10/11)
-                    systemInfo.MajorVersion = 10;
-                    systemInfo.MinorVersion = 0;
-                    systemInfo.BuildNumber = 19041;
-                    systemInfo.PlatformId = 2;
-                    systemInfo.CSDVersion = "Service Pack 0";
+                    using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+                    {
+                        if (key != null)
+                        {
+                            // Windows 10+ için yeni registry anahtarları
+                            object majorVersion = key.GetValue("CurrentMajorVersionNumber");
+                            object minorVersion = key.GetValue("CurrentMinorVersionNumber");
+                            object buildNumber = key.GetValue("CurrentBuildNumber");
+
+                            if (majorVersion != null && minorVersion != null && buildNumber != null)
+                            {
+                                systemInfo.MajorVersion = Convert.ToUInt32(majorVersion);
+                                systemInfo.MinorVersion = Convert.ToUInt32(minorVersion);
+                                systemInfo.BuildNumber = Convert.ToUInt32(buildNumber);
+                            }
+                            else
+                            {
+                                // Eski registry anahtarları (Windows 8 ve öncesi)
+                                object version = key.GetValue("CurrentVersion");
+                                if (version != null)
+                                {
+                                    Version ver = new Version(version.ToString());
+                                    systemInfo.MajorVersion = (uint)ver.Major;
+                                    systemInfo.MinorVersion = (uint)ver.Minor;
+                                }
+                                object build = key.GetValue("CurrentBuild");
+                                if (build != null)
+                                {
+                                    systemInfo.BuildNumber = Convert.ToUInt32(build);
+                                }
+                            }
+
+                            systemInfo.PlatformId = 2; // VER_PLATFORM_WIN32_NT
+
+                            // CSDVersion - Windows 10+ için boş bırak (service pack yok)
+                            systemInfo.CSDVersion = "";
+
+                            key.Close();
+                        }
+                        else
+                        {
+                            Console.WriteLine("[WARNING] Windows registry anahtarı bulunamadı, Environment.OSVersion kullanılıyor");
+                            // Fallback: Environment.OSVersion
+                            Version osVersion = Environment.OSVersion.Version;
+                            systemInfo.MajorVersion = (uint)osVersion.Major;
+                            systemInfo.MinorVersion = (uint)osVersion.Minor;
+                            systemInfo.BuildNumber = (uint)osVersion.Build;
+                            systemInfo.PlatformId = (uint)Environment.OSVersion.Platform;
+                            systemInfo.CSDVersion = "";
+                        }
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    systemInfo.MajorVersion = (uint)osVersion.dwMajorVersion;
-                    systemInfo.MinorVersion = (uint)osVersion.dwMinorVersion;
-                    systemInfo.BuildNumber = (uint)osVersion.dwBuildNumber;
-                    systemInfo.PlatformId = (uint)osVersion.dwPlatformId;
-                    
-                    // CSDVersion - Windows 10+ için genelde boş, fallback değer kullan
-                    if (string.IsNullOrEmpty(osVersion.szCSDVersion))
-                    {
-                        systemInfo.CSDVersion = "Service Pack 0";
-                    }
-                    else
-                    {
-                        systemInfo.CSDVersion = osVersion.szCSDVersion;
-                    }
+                    Console.WriteLine($"[ERROR] OS sürüm bilgileri alınamadı: {ex.Message}");
+                    return false;
                 }
 
                 // Sistem bilgilerini al
