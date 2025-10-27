@@ -93,7 +93,7 @@ namespace WinEmuDump
                     NumberOfStreams = (uint)streams.Count,
                     StreamDirectoryRva = 0x20,
                     TimeDateStamp = (uint)(DateTime.Now.ToFileTimeUtc() / 10000000 - 11644473600), // Unix timestamp
-                    Flags = 0x00000002 // MiniDumpWithFullMemoryInfo
+                    Flags = Win32.MiniDumpWithFullMemory | Win32.MiniDumpWithHandleData | Win32.MiniDumpWithFullMemoryInfo | Win32.MiniDumpIgnoreInaccessibleMemory // FullMemory | HandleData | FullMemoryInfo | IgnoreInaccessibleMemory
                 };
 
                 // Stream directory oluştur ve HandleStream RVA'larını düzelt
@@ -226,12 +226,18 @@ namespace WinEmuDump
                 BuildNumber = systemInfo.BuildNumber,
                 PlatformId = systemInfo.PlatformId,
                 CSDVersionRva = csdVersionRva,
-                SuiteMask = 0,
+                SuiteMask = systemInfo.SuiteMask,
                 Reserved2 = 0,
                 Cpu = new CPU_INFORMATION
                 {
-                    ProcessorFeatures0 = 0,
-                    ProcessorFeatures1 = 0
+                    VendorId0 = systemInfo.VendorId0,
+                    VendorId1 = systemInfo.VendorId1,
+                    VendorId2 = systemInfo.VendorId2,
+                    VersionInformation = systemInfo.VersionInformation,
+                    FeatureInformation = systemInfo.FeatureInformation,
+                    AMDExtendedCpuFeatures = systemInfo.AMDExtendedCpuFeatures,
+                    ProcessorFeatures0 = systemInfo.FeatureInformation,
+                    ProcessorFeatures1 = systemInfo.AMDExtendedCpuFeatures
                 }
             };
             

@@ -12,6 +12,27 @@ namespace WinEmuDump
         public const uint TIME_ZONE_ID_DAYLIGHT = 2;
         public const int MAX_PATH = 260;
 
+        // Minidump Flags Constants
+        public const uint MiniDumpWithFullMemory = 0x00000002;
+        public const uint MiniDumpWithHandleData = 0x00000004;
+        public const uint MiniDumpWithFullMemoryInfo = 0x00000800;
+        public const uint MiniDumpIgnoreInaccessibleMemory = 0x00010000;
+
+        // SuiteMask Constants
+        public const ushort VER_SUITE_SINGLE_USERTS = 0x0001;
+        public const ushort VER_SUITE_SMALLBUSINESS_RESTRICTED = 0x0002;
+        public const ushort VER_SUITE_SMALLBUSINESS = 0x0004;
+        public const ushort VER_SUITE_EMBEDDED_NT = 0x0008;
+        public const ushort VER_SUITE_BACKOFFICE = 0x0010;
+        public const ushort VER_SUITE_COMMUNICATIONS = 0x0020;
+        public const ushort VER_SUITE_TERMINAL = 0x0040;
+        public const ushort VER_SUITE_SMALLBUSINESS_RESTRICED = 0x0080;
+        public const ushort VER_SUITE_BLADE = 0x0200;
+        public const ushort VER_SUITE_EMBEDDED_RESTRICTED = 0x0400;
+        public const ushort VER_SUITE_SECURITY_APPLIANCE = 0x0800;
+        public const ushort VER_SUITE_MULTIUSER_TERMINAL = 0x1000;
+        public const ushort VER_SUITE_MULTICORE_PRO = 0x2000;
+
         ///////////////// CONSTANTS /////////////////
         public const int MEM_COMMIT = 0x00001000;
         public const int PAGE_NOACCESS = 0x01;
