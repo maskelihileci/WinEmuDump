@@ -36,6 +36,7 @@ namespace WinEmuDump
 
                 // Stream'leri hazırlama
                 List<MinidumpStream> streams = new List<MinidumpStream>();
+                byte[] rawMemoryData = null; // Raw memory data ayrı tutulacak
                 int systemInfoStreamIndex = 0;
                 int handleStreamIndex = -1;
                 int moduleStreamIndex = -1;
@@ -75,9 +76,21 @@ namespace WinEmuDump
                     streams.Add(CreateModuleListStream(moduleList, 0)); // Geçici RVA = 0
                 }
 
-                // Memory64List Stream (Full memory) - Geçici RVA = 0
+                // Memory64List Stream - sadece descriptors, raw data ayrı
                 memory64ListStreamIndex = streams.Count;
-                streams.Add(CreateMemory64ListStream(hProcess, 0));
+                var (descriptorStream, rawData) = CreateMemory64ListStreamSeparate(hProcess, 0);
+                
+                if (descriptorStream.Data.Length > 0)
+                {
+                    streams.Add(descriptorStream);
+                    rawMemoryData = rawData;
+                    Console.WriteLine($"[INFO] Memory64List eklendi: {descriptorStream.Data.Length} bytes descriptor, {rawData.Length / (1024*1024)} MB raw data");
+                }
+                else
+                {
+                    Console.WriteLine($"[WARNING] Memory64List boş");
+                    memory64ListStreamIndex = -1;
+                }
 
                 // MemoryInfoList Stream (Memory region details)
                 streams.Add(CreateMemoryInfoListStream(hProcess));
@@ -93,7 +106,10 @@ namespace WinEmuDump
                     NumberOfStreams = (uint)streams.Count,
                     StreamDirectoryRva = 0x20,
                     TimeDateStamp = (uint)(DateTime.Now.ToFileTimeUtc() / 10000000 - 11644473600), // Unix timestamp
-                    Flags = Win32.MiniDumpWithFullMemory | Win32.MiniDumpWithHandleData | Win32.MiniDumpWithFullMemoryInfo | Win32.MiniDumpIgnoreInaccessibleMemory // FullMemory | HandleData | FullMemoryInfo | IgnoreInaccessibleMemory
+                    Flags = (memory64ListStreamIndex >= 0 ? Win32.MiniDumpWithFullMemory : 0) |
+                            Win32.MiniDumpWithHandleData |
+                            Win32.MiniDumpWithFullMemoryInfo |
+                            Win32.MiniDumpIgnoreInaccessibleMemory
                 };
 
                 // Stream directory oluştur ve HandleStream RVA'larını düzelt
@@ -147,17 +163,69 @@ namespace WinEmuDump
                         streams[i] = CreateExceptionStream(threadIdForExceptionFix, currentOffset);
                     }
 
-                    // Memory64List stream'i için RVA'ları düzelt
-                    if (i == memory64ListStreamIndex)
+                    // Memory64List için BaseRva düzeltmesi
+                    if (memory64ListStreamIndex >= 0 && i == memory64ListStreamIndex)
                     {
-                        Console.WriteLine($"[DEBUG] Memory64List stream RVA düzeltiliyor, base offset: 0x{currentOffset:X}");
-                        streams[i] = CreateMemory64ListStream(hProcess, currentOffset);
+                        // BaseRva = header + directory + tüm stream'lerin boyutları (raw data'nın başlangıç yeri)
+                        uint headerSize = (uint)Marshal.SizeOf(typeof(MinidumpHeader));
+                        uint directorySize = (uint)(streams.Count * Marshal.SizeOf(typeof(MinidumpStreamDirectoryEntry)));
+                        uint totalStreamSize = 0;
+                        foreach (var s in streams)
+                        {
+                            totalStreamSize += (uint)s.Data.Length;
+                        }
+                        uint baseRvaForRawData = headerSize + directorySize + totalStreamSize;
+
+                        Console.WriteLine($"[DEBUG] Memory64List BaseRva düzeltiliyor: 0x{baseRvaForRawData:X}");
+                        var (updatedStream, _) = CreateMemory64ListStreamSeparate(hProcess, currentOffset, baseRvaForRawData);
+                        streams[i] = updatedStream;
                     }
 
+                    // SystemInfo stream için Size değeri sadece MINIDUMP_SYSTEM_INFO struct boyutu olmalı
+                    uint streamSize = (uint)streams[i].Data.Length;
+                    if (i == systemInfoStreamIndex)
+                    {
+                        streamSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_SYSTEM_INFO)); // 0x38 (56 bytes)
+                        Console.WriteLine($"[DEBUG] SystemInfo stream Size düzeltildi: 0x{streamSize:X} (gerçek data: 0x{streams[i].Data.Length:X})");
+                    }
+                    else if (i == handleStreamIndex)
+                    {
+                        // Handle stream için size düzeltmesi - sadece header kısmı
+                        HandleListStream handleHeader = StructToStruct<HandleListStream>(streams[i].Data.Take(Marshal.SizeOf(typeof(HandleListStream))).ToArray());
+                        streamSize = handleHeader.SizeOfHeader;
+                        Console.WriteLine($"[DEBUG] HandleList stream Size düzeltildi: 0x{streamSize:X} (gerçek data: 0x{streams[i].Data.Length:X})");
+                    }
+                    else if (i == moduleStreamIndex)
+                    {
+                        // Module stream için size düzeltmesi - sadece modül sayısı ve modüller
+                        uint moduleCount = BitConverter.ToUInt32(streams[i].Data, 0);
+                        streamSize = 4 + (moduleCount * (uint)Marshal.SizeOf(typeof(MINIDUMP_MODULE)));
+                        Console.WriteLine($"[DEBUG] ModuleList stream Size düzeltildi: 0x{streamSize:X} (gerçek data: 0x{streams[i].Data.Length:X})");
+                    }
+                    else if (i == threadListStreamIndex)
+                    {
+                        // ThreadList stream için size düzeltmesi - header + thread structs
+                        MINIDUMP_THREAD_LIST threadHeader = StructToStruct<MINIDUMP_THREAD_LIST>(streams[i].Data.Take(Marshal.SizeOf(typeof(MINIDUMP_THREAD_LIST))).ToArray());
+                        streamSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_THREAD_LIST)) + (threadHeader.NumberOfThreads * (uint)Marshal.SizeOf(typeof(MINIDUMP_THREAD)));
+                        Console.WriteLine($"[DEBUG] ThreadList stream Size düzeltildi: 0x{streamSize:X} (gerçek data: 0x{streams[i].Data.Length:X})");
+                    }
+                    else if (i == exceptionStreamIndex)
+                    {
+                        // Exception stream için size düzeltmesi - sadece struct boyutu
+                        streamSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_EXCEPTION_STREAM));
+                        Console.WriteLine($"[DEBUG] Exception stream Size düzeltildi: 0x{streamSize:X} (gerçek data: 0x{streams[i].Data.Length:X})");
+                    }
+                    else if (memory64ListStreamIndex >= 0 && i == memory64ListStreamIndex)
+                    {
+                        // Memory64List için size düzeltmesi - sadece descriptor kısmı
+                        streamSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_MEMORY64_LIST)) + (uint)(streams[i].Data.Length - Marshal.SizeOf(typeof(MINIDUMP_MEMORY64_LIST)));
+                        Console.WriteLine($"[DEBUG] Memory64List stream Size düzeltildi: 0x{streamSize:X} (gerçek data: 0x{streams[i].Data.Length:X})");
+                    }
+                    
                     MinidumpStreamDirectoryEntry entry = new MinidumpStreamDirectoryEntry
                     {
                         StreamType = streams[i].StreamType,
-                        Size = (uint)streams[i].Data.Length,
+                        Size = streamSize,
                         Location = currentOffset
                     };
 
@@ -170,9 +238,17 @@ namespace WinEmuDump
                 minidumpData.AddRange(StructToByteArray(header));
                 minidumpData.AddRange(streamDirectoryBytes);
 
+                // Stream'leri ekle
                 foreach (var stream in streams)
                 {
                     minidumpData.AddRange(stream.Data);
+                }
+                
+                // Raw memory data'yı en sona ekle (Memory64List için)
+                if (rawMemoryData != null && rawMemoryData.Length > 0)
+                {
+                    Console.WriteLine($"[INFO] Raw memory data ekleniyor: {rawMemoryData.Length / (1024*1024)} MB @ offset 0x{minidumpData.Count:X}");
+                    minidumpData.AddRange(rawMemoryData);
                 }
 
                 // Dosyaya yaz
@@ -588,11 +664,9 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
     };
 }
         /// <summary>
-        /// Memory64List stream'i oluşturur (Full memory dump)
+        /// Memory64List stream'i oluşturur - AYRI: descriptors ve raw data
         /// </summary>
-        /// <param name="hProcess">Hedef işlemin handle'ı</param>
-        /// <param name="streamBaseRva">Stream'in dosyadaki başlangıç RVA'sı (0 = ilk geçiş)</param>
-        private static MinidumpStream CreateMemory64ListStream(IntPtr hProcess, uint streamBaseRva = 0)
+        private static (MinidumpStream stream, byte[] rawData) CreateMemory64ListStreamSeparate(IntPtr hProcess, uint streamBaseRva = 0, uint rawDataBaseRva = 0)
         {
             try
             {
@@ -617,8 +691,8 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
                     if (ntStatus != 0)
                         break;
 
-                    // Okunabilir bellek bölgeleri (PAGE_NOACCESS hariç)
-                    if (mbi.Protect != PAGE_NOACCESS)
+                    // Sadece committed bellek bölgeleri (MEM_COMMIT) ve PAGE_NOACCESS hariç
+                    if (mbi.State == MEM_COMMIT && mbi.Protect != PAGE_NOACCESS)
                     {
                         long regionSize = (long)mbi.RegionSize;
 
@@ -664,7 +738,6 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
 
                 // Raw memory data - Sadece başarılı okunan bölgeleri dahil et
                 const int MAX_CHUNK_SIZE = 64 * 1024; // 64KB chunks (daha küçük chunk'lar daha güvenilir)
-                long totalReadSize = 0;
                 var validRegions = new List<Win32.Memory64Info>();
 
                 // İlk olarak bölgeleri test et - sadece tamamen okunabilenleri dahil et
@@ -702,78 +775,55 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
                     }
                 }
 
-                Console.WriteLine($"[INFO] {validRegions.Count} geçerli bölge bulundu, {memoryRegions.Count - validRegions.Count} bölge atlandı");
+                Console.WriteLine($"[INFO] {validRegions.Count} geçerli bölge bulundu");
 
-                // Memory64List header - Use correct MINIDUMP_MEMORY64_LIST structure
-                // BaseRva: RVA where raw memory data begins (from start of file)
-                uint descriptorCount = (uint)validRegions.Count;
-                ulong memoryDataBaseRva = streamBaseRva +
-                    (ulong)Marshal.SizeOf(typeof(MINIDUMP_MEMORY64_LIST)) +
+                if (validRegions.Count == 0)
+                {
+                    return (new MinidumpStream
+                    {
+                        StreamType = MINIDUMP_STREAM_TYPE_Memory64List,
+                        Data = new byte[0]
+                    }, new byte[0]);
+                }
+
+                // Bölgeleri sırala
+                var sortedRegions = validRegions.OrderBy(r => r.StartOfMemoryRange).ToList();
+
+                // Memory64List header
+                uint descriptorCount = (uint)sortedRegions.Count;
+                ulong memoryDataBaseRva = rawDataBaseRva > 0 ? rawDataBaseRva :
+                    streamBaseRva + (ulong)Marshal.SizeOf(typeof(MINIDUMP_MEMORY64_LIST)) +
                     (ulong)(descriptorCount * Marshal.SizeOf(typeof(MINIDUMP_MEMORY_DESCRIPTOR64)));
 
                 MINIDUMP_MEMORY64_LIST memory64List = new MINIDUMP_MEMORY64_LIST
                 {
-                    NumberOfMemoryRanges = (ulong)validRegions.Count,
+                    NumberOfMemoryRanges = (ulong)sortedRegions.Count,
                     BaseRva = memoryDataBaseRva
                 };
 
-                Console.WriteLine($"[DEBUG] Memory64List BaseRva hesaplaması:");
-                Console.WriteLine($"[DEBUG] - Stream base RVA: 0x{streamBaseRva:X}");
-                Console.WriteLine($"[DEBUG] - Header size: 0x{Marshal.SizeOf(typeof(MINIDUMP_MEMORY64_LIST)):X}");
-                Console.WriteLine($"[DEBUG] - Descriptor count: {descriptorCount}");
-                Console.WriteLine($"[DEBUG] - Descriptor size: 0x{Marshal.SizeOf(typeof(MINIDUMP_MEMORY_DESCRIPTOR64)):X}");
-                Console.WriteLine($"[DEBUG] - Calculated BaseRva: 0x{memoryDataBaseRva:X}");
+                Console.WriteLine($"[DEBUG] Memory64List: {sortedRegions.Count} regions, BaseRva=0x{memoryDataBaseRva:X}");
 
-                List<byte> memoryData = new List<byte>();
-                memoryData.AddRange(StructToByteArray(memory64List));
+                List<byte> descriptorData = new List<byte>();
+                descriptorData.AddRange(StructToByteArray(memory64List));
 
-                // Memory descriptor entries - Use correct MINIDUMP_MEMORY_DESCRIPTOR64 structure
-                // Bölgeleri adres sırasına göre sırala (önemli!)
-                var sortedRegions = validRegions.OrderBy(r => r.StartOfMemoryRange).ToList();
-
-                // RVA hesaplamaları için offset'leri ayarla
-                uint currentDataOffset = streamBaseRva +
-                    (uint)Marshal.SizeOf(typeof(MINIDUMP_MEMORY64_LIST)) +
-                    (uint)(sortedRegions.Count * Marshal.SizeOf(typeof(MINIDUMP_MEMORY_DESCRIPTOR64)));
-
-                Console.WriteLine($"[DEBUG] Memory64List RVA hesaplamaları:");
-                Console.WriteLine($"[DEBUG] - Stream base RVA: 0x{streamBaseRva:X}");
-                Console.WriteLine($"[DEBUG] - Header size: 0x{Marshal.SizeOf(typeof(MINIDUMP_MEMORY64_LIST)):X}");
-                Console.WriteLine($"[DEBUG] - Descriptor size: 0x{Marshal.SizeOf(typeof(MINIDUMP_MEMORY_DESCRIPTOR64)):X}");
-                Console.WriteLine($"[DEBUG] - Initial data offset: 0x{currentDataOffset:X}");
-
+                // Descriptor'ları ekle (sadece metadata)
                 foreach (var region in sortedRegions)
                 {
-                    // RVA'yi güncelle (kopya oluşturarak)
-                    var memInfoCopy = new Win32.Memory64Info
-                    {
-                        StartOfMemoryRange = region.StartOfMemoryRange,
-                        Memory = new MINIDUMP_LOCATION_DESCRIPTOR
-                        {
-                            DataSize = region.Memory.DataSize,
-                            Rva = currentDataOffset
-                        }
-                    };
-
                     MINIDUMP_MEMORY_DESCRIPTOR64 descriptor = new MINIDUMP_MEMORY_DESCRIPTOR64
                     {
-                        StartOfMemoryRange = memInfoCopy.StartOfMemoryRange,
-                        DataSize = memInfoCopy.Memory.DataSize
+                        StartOfMemoryRange = region.StartOfMemoryRange,
+                        DataSize = region.Memory.DataSize
                     };
-                    memoryData.AddRange(StructToByteArray(descriptor));
-
-                    Console.WriteLine($"[DEBUG] Bölge 0x{memInfoCopy.StartOfMemoryRange:X}: DataSize=0x{memInfoCopy.Memory.DataSize:X}, RVA=0x{currentDataOffset:X}");
-
-                    // Sonraki bölge için RVA'yi güncelle
-                    currentDataOffset += memInfoCopy.Memory.DataSize;
+                    descriptorData.AddRange(StructToByteArray(descriptor));
                 }
 
-                // Şimdi sadece geçerli bölgeleri oku (sıralı olarak!)
+                // Raw memory data'yı oku (ayrı array)
+                List<byte> rawMemoryData = new List<byte>();
+                
                 foreach (var memInfo in sortedRegions)
                 {
                     long remainingSize = (long)memInfo.Memory.DataSize;
                     long currentOffset = 0;
-                    long regionReadSize = 0;
 
                     while (remainingSize > 0)
                     {
@@ -784,56 +834,45 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
                         {
                             byte[] buffer = new byte[chunkSize];
                             uint ntStatus = NtReadVirtualMemory(hProcess, chunkAddress, buffer, chunkSize, out IntPtr bytesReadPtr);
-
                             uint bytesRead = (uint)bytesReadPtr.ToInt64();
 
                             if (ntStatus == 0 && bytesRead == chunkSize)
                             {
-                                memoryData.AddRange(buffer);
-                                regionReadSize += chunkSize;
-                                totalReadSize += chunkSize;
+                                rawMemoryData.AddRange(buffer);
                             }
                             else
                             {
-                                // Bu bölge artık okunamıyor, kalan kısmı atla
-                                Console.WriteLine($"[WARNING] Bölge okunurken sorun: 0x{chunkAddress:X}, chunk atlanıyor");
-                                break;
+                                // Padding ile doldur
+                                rawMemoryData.AddRange(new byte[chunkSize]);
                             }
                         }
-                        catch (Exception ex)
+                        catch
                         {
-                            // Bölge artık okunamıyor, kalan kısmı atla
-                            Console.WriteLine($"[WARNING] Bölge okunurken hata: {ex.Message}, chunk atlanıyor");
-                            break;
+                            // Padding ile doldur
+                            rawMemoryData.AddRange(new byte[chunkSize]);
                         }
 
                         remainingSize -= chunkSize;
                         currentOffset += chunkSize;
                     }
-
-                    if (regionReadSize > 0)
-                    {
-                        Console.WriteLine($"[INFO] Bölge okundu: 0x{memInfo.StartOfMemoryRange:X} - {regionReadSize / (1024 * 1024)} MB");
-                    }
                 }
 
-                Console.WriteLine($"[SUCCESS] Toplam {totalReadSize / (1024 * 1024)} MB bellek verisi okundu");
+                Console.WriteLine($"[SUCCESS] Memory64List: {descriptorData.Count} bytes descriptors, {rawMemoryData.Count / (1024*1024)} MB raw data");
 
-                return new MinidumpStream
+                return (new MinidumpStream
                 {
                     StreamType = MINIDUMP_STREAM_TYPE_Memory64List,
-                    Data = memoryData.ToArray()
-                };
+                    Data = descriptorData.ToArray()
+                }, rawMemoryData.ToArray());
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[WARNING] Memory64List oluşturma hatası: {ex.Message}");
-                // Boş stream döndür
-                return new MinidumpStream
+                return (new MinidumpStream
                 {
                     StreamType = MINIDUMP_STREAM_TYPE_Memory64List,
                     Data = new byte[0]
-                };
+                }, new byte[0]);
             }
         }
 
@@ -1148,6 +1187,27 @@ private static MinidumpStream CreateModuleListStream(List<ModuleInfo> moduleList
                 Marshal.FreeHGlobal(ptr);
             }
             return byteArray;
+        }
+
+        /// <summary>
+        /// Byte array'den struct'a çevirir
+        /// </summary>
+        private static T StructToStruct<T>(byte[] data) where T : struct
+        {
+            int structSize = Marshal.SizeOf(typeof(T));
+            if (data.Length < structSize)
+                throw new ArgumentException($"Data length {data.Length} is less than struct size {structSize}");
+
+            IntPtr ptr = Marshal.AllocHGlobal(structSize);
+            try
+            {
+                Marshal.Copy(data, 0, ptr, structSize);
+                return Marshal.PtrToStructure<T>(ptr);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(ptr);
+            }
         }
     }
 
