@@ -40,12 +40,12 @@ namespace WinEmuDump
                             DumpFlags = 0x00000003, // Default dump flags
                             DumpError = 0,
                             ExitStatus = 259, // STILL_ACTIVE
-                            CreateTime = IntPtr.Zero, // Not available through ProcessThread
-                            ExitTime = IntPtr.Zero,
-                            KernelTime = IntPtr.Zero,
-                            UserTime = IntPtr.Zero,
-                            StartAddress = IntPtr.Zero, // Not available through ProcessThread
-                            Affinity = IntPtr.Zero
+                            CreateTime = 0UL, // Not available through ProcessThread
+                            ExitTime = 0UL,
+                            KernelTime = 0UL,
+                            UserTime = 0UL,
+                            StartAddress = 0UL, // Not available through ProcessThread
+                            Affinity = 0UL
                         };
 
                         threadList.Add(threadInfo);
@@ -153,6 +153,8 @@ namespace WinEmuDump
                             continue;
                         }
 
+                        // Zaman bilgilerini güvenli şekilde almaya çalış
+                        // ThreadCollector'da zaman bilgilerini toplamıyoruz, sadece temel bilgiler
                         MinidumpThreadInfo threadInfo = new MinidumpThreadInfo
                         {
                             ThreadId = (uint)thread.Id,
@@ -515,6 +517,40 @@ namespace WinEmuDump
     {
         public uint ThreadId;
         public CONTEXT Context;
+    }
+
+    /// <summary>
+    /// Thread bilgilerini tutan struct
+    /// </summary>
+    internal struct ThreadInfo
+    {
+        public uint ThreadId;
+        public uint DumpFlags;
+        public uint DumpError;
+        public uint ExitStatus;
+        public UInt64 CreateTime;
+        public UInt64 ExitTime;
+        public UInt64 KernelTime;
+        public UInt64 UserTime;
+        public UInt64 StartAddress;
+        public UInt64 Affinity;
+
+        // Struct'ın tamamen başlatılmış olduğundan emin olmak için
+        public ThreadInfo(uint threadId, uint dumpFlags = 0, uint dumpError = 0, uint exitStatus = 0,
+                         ulong createTime = 0, ulong exitTime = 0, ulong kernelTime = 0, ulong userTime = 0,
+                         ulong startAddress = 0, ulong affinity = 0)
+        {
+            ThreadId = threadId;
+            DumpFlags = dumpFlags;
+            DumpError = dumpError;
+            ExitStatus = exitStatus;
+            CreateTime = createTime;
+            ExitTime = exitTime;
+            KernelTime = kernelTime;
+            UserTime = userTime;
+            StartAddress = startAddress;
+            Affinity = affinity;
+        }
     }
 
     /// <summary>

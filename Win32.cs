@@ -233,6 +233,13 @@ namespace WinEmuDump
         [DllImport("kernel32.dll")]
         public static extern uint GetTimeZoneInformation(out TIME_ZONE_INFORMATION lpTimeZoneInformation);
 
+        [DllImport("kernel32.dll")]
+        public static extern uint GetProcessId(IntPtr Process);
+
+        [DllImport("psapi.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetProcessMemoryInfo(IntPtr hProcess, out PROCESS_MEMORY_COUNTERS_EX ppsmemCounters, uint cb);
+
         ///////////////// TIME ZONE STRUCT /////////////////
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         public struct TIME_ZONE_INFORMATION
@@ -759,6 +766,23 @@ namespace WinEmuDump
             public uint AvailableVirtual;
         }
 
+        // PROCESS_MEMORY_COUNTERS_EX - Extended process memory counters
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_MEMORY_COUNTERS_EX
+        {
+            public uint cb;
+            public uint PageFaultCount;
+            public uint PeakWorkingSetSize;
+            public uint WorkingSetSize;
+            public uint QuotaPeakPagedPoolUsage;
+            public uint QuotaPagedPoolUsage;
+            public uint QuotaPeakNonPagedPoolUsage;
+            public uint QuotaNonPagedPoolUsage;
+            public uint PagefileUsage;
+            public uint PeakPagefileUsage;
+            public uint PrivateUsage;
+        }
+
         ///////////////// ADVANCED MINIDUMP STREAM STRUCTS /////////////////
 
         [StructLayout(LayoutKind.Sequential)]
@@ -801,10 +825,12 @@ namespace WinEmuDump
             // TOPLAM: 32 bytes - MINIDUMP_HANDLE_DESCRIPTOR_2 (Windows Vista+)
         }
 
-        [StructLayout(LayoutKind.Sequential)]
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
         public struct ThreadInfoListStream
         {
-            public uint NumberOfEntries;
+            public uint SizeOfHeader;     // Size of this header
+            public uint SizeOfEntry;      // Size of each entry (ThreadInfo struct)
+            public uint NumberOfEntries;  // Number of thread info entries
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -814,12 +840,12 @@ namespace WinEmuDump
             public uint DumpFlags;
             public uint DumpError;
             public uint ExitStatus;
-            public IntPtr CreateTime;
-            public IntPtr ExitTime;
-            public IntPtr KernelTime;
-            public IntPtr UserTime;
-            public IntPtr StartAddress;
-            public IntPtr Affinity;
+            public UInt64 CreateTime;
+            public UInt64 ExitTime;
+            public UInt64 KernelTime;
+            public UInt64 UserTime;
+            public UInt64 StartAddress;
+            public UInt64 Affinity;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -832,7 +858,7 @@ namespace WinEmuDump
         public struct ThreadName
         {
             public uint ThreadId;
-            public IntPtr ThreadNameRva;
+            public uint ThreadNameRva;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -867,6 +893,75 @@ namespace WinEmuDump
             public IntPtr[] ExceptionInformation;
         }
 
+        // MINIDUMP_UNLOADED_MODULE - Unloaded module information
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_UNLOADED_MODULE
+        {
+            public ulong BaseOfImage;
+            public uint SizeOfImage;
+            public uint CheckSum;
+            public uint TimeDateStamp;
+            public uint ModuleNameRva;
+        }
+
+        // MINIDUMP_UNLOADED_MODULE_LIST - Unloaded module list header
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_UNLOADED_MODULE_LIST
+        {
+            public uint SizeOfHeader;
+            public uint SizeOfEntry;
+            public uint NumberOfEntries;
+        }
+
+        // MINIDUMP_HANDLE_OPERATION_LIST - Handle operation list header
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_HANDLE_OPERATION_LIST
+        {
+            public uint SizeOfHeader;
+            public uint SizeOfEntry;
+            public uint NumberOfEntries;
+            public uint Reserved;
+        }
+
+        // MINIDUMP_FUNCTION_TABLE_DESCRIPTOR - Function table descriptor
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_FUNCTION_TABLE_DESCRIPTOR
+        {
+            public ulong MinimumAddress;
+            public ulong MaximumAddress;
+            public ulong BaseAddress;
+            public uint EntryCount;
+            public ulong FunctionTableRva; // RVA to function entries
+        }
+
+        // MINIDUMP_FUNCTION_TABLE_STREAM - Function table stream header
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_FUNCTION_TABLE_STREAM
+        {
+            public uint SizeOfHeader;
+            public uint SizeOfDescriptor;
+            public uint SizeOfNativeDescriptor;
+            public uint SizeOfFunctionEntry;
+            public uint NumberOfDescriptors;
+        }
+
+        // MINIDUMP_PROCESS_VM_COUNTERS - Process VM counters stream
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_PROCESS_VM_COUNTERS
+        {
+            public uint Revision;
+            public uint PageFaultCount;
+            public ulong PeakWorkingSetSize;
+            public ulong WorkingSetSize;
+            public ulong QuotaPeakPagedPoolUsage;
+            public ulong QuotaPagedPoolUsage;
+            public ulong QuotaPeakNonPagedPoolUsage;
+            public ulong QuotaNonPagedPoolUsage;
+            public ulong PagefileUsage;
+            public ulong PeakPagefileUsage;
+            public ulong PrivateUsage;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         public struct SystemMemoryInfoStream
         {
@@ -895,6 +990,50 @@ namespace WinEmuDump
             public uint SizeOfEntry;
             public ulong NumberOfEntries;
         }
+
+        ///////////////// ADVANCED STREAM STRUCTS (Token, JavaScript, IPT) /////////////////
+
+        // MINIDUMP_TOKEN_INFO_LIST - Token stream header
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_TOKEN_INFO_LIST
+        {
+            public uint TokenListSize;     // Size of entire list
+            public uint TokenListEntries;  // Number of entries
+            public uint ListHeaderSize;    // Size of header
+            public uint ElementHeaderSize; // Size of each element
+        }
+
+        // MINIDUMP_TOKEN_INFO - Token information
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_TOKEN_INFO
+        {
+            public uint TokenSize;     // Size of TOKEN struct
+            public uint TokenId;       // Token ID
+            public uint TokenHandle;   // Token handle
+            // TOKEN struct would follow, but we skip for simplicity
+        }
+
+        // MINIDUMP_JAVASCRIPT_DATA - JavaScript data stream
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_JAVASCRIPT_DATA
+        {
+            public uint SizeOfStream;      // Size of entire stream
+            public uint ContextCount;      // Number of JavaScript contexts
+            // Context data would follow
+        }
+
+        // MINIDUMP_IPT_TRACE_STREAM - Intel PT trace stream
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_IPT_TRACE_STREAM
+        {
+            public uint SizeOfHeader;      // Size of header
+            public uint SizeOfEntry;       // Size of each entry
+            public uint NumberOfEntries;   // Number of trace entries
+            public uint TraceVersion;      // Trace format version
+            public uint TraceState;        // Trace state flags
+        }
+
+        // Advanced stream type constants are already defined above
 
         ///////////////// MODULE INFO STRUCT /////////////////
 

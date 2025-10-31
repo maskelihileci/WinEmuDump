@@ -377,7 +377,7 @@ namespace WinEmuDump
         /// <param name="ebx">EBX çıktısı</param>
         /// <param name="ecx">ECX çıktısı</param>
         /// <param name="edx">EDX çıktısı</param>
-        private static void GetCpuidExtended(uint function, uint subfunction, out uint eax, out uint ebx, out uint ecx, out uint edx)
+        public static void GetCpuidExtended(uint function, uint subfunction, out uint eax, out uint ebx, out uint ecx, out uint edx)
         {
             eax = 0; ebx = 0; ecx = 0; edx = 0;
             

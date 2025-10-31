@@ -284,12 +284,33 @@ namespace WinEmuDump
                     Console.WriteLine("[INFO] İçerik:");
                     Console.WriteLine($"  - SystemInfo: Windows {systemInfo.MajorVersion}.{systemInfo.MinorVersion} Build {systemInfo.BuildNumber}");
                     Console.WriteLine($"  - ThreadList: {threadList.Count} thread (TEB + Stack + Context)");
+                    Console.WriteLine($"  - ThreadInfoList: {threadList.Count} thread info");
                     Console.WriteLine($"  - Exception: {(threadList.Count > 0 ? "var" : "yok")}");
                     Console.WriteLine($"  - HandleList: {handleList.Count} handle");
+                    Console.WriteLine($"  - HandleOperationList: boş liste");
                     Console.WriteLine($"  - ModuleList: {moduleList.Count} modül");
+                    Console.WriteLine($"  - UnloadedModuleList: boş liste");
                     Console.WriteLine($"  - Memory64List: Full memory dump");
                     Console.WriteLine($"  - MemoryInfoList: Bellek bölgeleri detayları");
                     Console.WriteLine($"  - MiscInfo: Process {processInfo.ProcessId}");
+                    Console.WriteLine($"  - CommentStreamA/W: Metadata");
+                    Console.WriteLine($"  - ThreadNamesStream: Thread isimleri");
+                    Console.WriteLine($"  - FunctionTableStream: boş liste");
+                    Console.WriteLine($"  - SystemMemoryInfo: Sistem belleği");
+                    Console.WriteLine($"  - ProcessVmCounters: VM sayaçları");
+                    Console.WriteLine($"  - TokenStream: boş liste");
+                    Console.WriteLine($"  - JavaScriptDataStream: boş liste");
+                    Console.WriteLine($"  - IptTraceStream: boş liste");
+
+                    // Kod doğrulama testi
+                    if (ValidateDumpFile(dumpfile))
+                    {
+                        Console.WriteLine($"[SUCCESS] Dosya doğrulama testi başarılı!");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[WARNING] Dosya doğrulama testinde sorunlar var ama dosya oluşturuldu");
+                    }
                 }
                 else
                 {
@@ -458,6 +479,67 @@ namespace WinEmuDump
 
         [DllImport("kernel32.dll")]
         private static extern IntPtr GetProcAddress(IntPtr hModule, string procedureName);
+
+        /// <summary>
+        /// Oluşturulan dump dosyasının temel doğrulamasını yapar
+        /// </summary>
+        private static bool ValidateDumpFile(string dumpPath)
+        {
+            try
+            {
+                Console.WriteLine("[INFO] Dump dosyası doğrulanıyor...");
+
+                // Dosya varlığını kontrol et
+                if (!System.IO.File.Exists(dumpPath))
+                {
+                    Console.WriteLine("[ERROR] Dump dosyası bulunamadı!");
+                    return false;
+                }
+
+                // Dosya boyutunu kontrol et
+                var fileInfo = new System.IO.FileInfo(dumpPath);
+                if (fileInfo.Length < 1024) // Minimum 1KB
+                {
+                    Console.WriteLine($"[WARNING] Dump dosyası çok küçük: {fileInfo.Length} bytes");
+                    return false;
+                }
+
+                // Temel header kontrolü
+                using (var fs = new System.IO.FileStream(dumpPath, System.IO.FileMode.Open, System.IO.FileAccess.Read))
+                using (var reader = new System.IO.BinaryReader(fs))
+                {
+                    // Signature kontrolü (PMDM)
+                    uint signature = reader.ReadUInt32();
+                    if (signature != 0x504d444d)
+                    {
+                        Console.WriteLine($"[ERROR] Geçersiz signature: 0x{signature:X}");
+                        return false;
+                    }
+
+                    // Version kontrolü
+                    uint version = reader.ReadUInt32();
+                    Console.WriteLine($"[INFO] Minidump versiyonu: 0x{version:X}");
+
+                    // Stream sayısı
+                    uint streamCount = reader.ReadUInt32();
+                    Console.WriteLine($"[INFO] Stream sayısı: {streamCount}");
+
+                    if (streamCount == 0 || streamCount > 50)
+                    {
+                        Console.WriteLine($"[WARNING] Şüpheli stream sayısı: {streamCount}");
+                        return false;
+                    }
+                }
+
+                Console.WriteLine($"[SUCCESS] Temel doğrulama başarılı - Dosya boyutu: {fileInfo.Length / (1024*1024.0):F2} MB");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] Dosya doğrulama hatası: {ex.Message}");
+                return false;
+            }
+        }
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate uint GetProcessIdDelegate(IntPtr hProcess);
