@@ -3,21 +3,25 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using static WinEmuDump.Win32;
 
-namespace WinEmuDump
+namespace WinEmuDump.Helpers
 {
-    internal class HandleCollector
+    /// <summary>
+    /// Handle işlemleri için yardımcı fonksiyonlar
+    /// HandleCollector.cs içindeki fonksiyonların yardımcı sınıfa taşınmış hali
+    /// Kompakt ve tekrar kullanılabilir tasarım için ortak handle operasyonları
+    /// </summary>
+    internal static class HandleHelper
     {
-        // HandleCollector.cs - Sistem handle'larını toplama işlevi
-        // Bu dosya NtQuerySystemInformation kullanarak sistem handle'larını toplar
+        // Source File #2 (HandleHelper.cs)
 
         // Static object type cache - ObjectTypeIndex -> TypeName mapping
-        // Artık "statik" sabit eşlemelere güvenmiyoruz. Her index için ilk karşılaşmada
-        // handle'dan tip bilgisini sorgulayıp cache'liyoruz.
-        private static Dictionary<byte, string> _objectTypeMap = new Dictionary<byte, string>();
+        // NtQueryObject ile dinamik olarak doldurulur.
+        private static readonly Dictionary<byte, string> _objectTypeMap = new Dictionary<byte, string>();
         private static readonly object _mapLock = new object();
 
         /// <summary>
-        /// İşlemin sahip olduğu tüm sistem handle'larını ve özelliklerini toplar
+        /// Hedef işlemin sahip olduğu tüm sistem handle'larını ve özelliklerini toplar.
+        /// NtQuerySystemInformation(SystemHandleInformation) kullanır.
         /// </summary>
         /// <param name="hProcess">Hedef işlemin handle'ı</param>
         /// <param name="handleList">Toplanan handle bilgilerini içeren çıkış listesi</param>
@@ -28,8 +32,8 @@ namespace WinEmuDump
 
             try
             {
-                // Sistem handle listesi için buffer boyutu
-                uint bufferSize = 0x10000; // 64KB başlangıç boyutu
+                // Sistem handle listesi için başlangıç buffer boyutu
+                uint bufferSize = 0x10000; // 64KB
                 IntPtr buffer = IntPtr.Zero;
 
                 while (true)
@@ -42,12 +46,12 @@ namespace WinEmuDump
                     }
 
                     uint returnLength;
-                    uint ntStatus = NtQuerySystemInformation(SystemHandleInformation, buffer, bufferSize, out returnLength);
+                    uint ntStatus = NativeApi.NtQuerySystemInformation(SystemHandleInformation, buffer, bufferSize, out returnLength);
 
                     if (ntStatus == 0xC0000004) // STATUS_INFO_LENGTH_MISMATCH
                     {
                         Marshal.FreeHGlobal(buffer);
-                        bufferSize = returnLength + 0x1000; // Ek buffer ekle
+                        bufferSize = returnLength + 0x1000; // Biraz artır
                         continue;
                     }
                     else if (ntStatus != 0)
@@ -64,33 +68,32 @@ namespace WinEmuDump
                 {
                     // SYSTEM_HANDLE_INFORMATION yapısını oku
                     SYSTEM_HANDLE_INFORMATION handleInfo = Marshal.PtrToStructure<SYSTEM_HANDLE_INFORMATION>(buffer);
-                    IntPtr handleArrayPtr = IntPtr.Add(buffer, 8); // Doğru offset: NumberOfHandles (4 byte) + padding/alignment (4 byte)
+                    IntPtr handleArrayPtr = IntPtr.Add(buffer, 8); // NumberOfHandles (4) + alignment (4)
 
                     Console.WriteLine($"[INFO] Sistemde toplam {handleInfo.NumberOfHandles} handle bulundu");
 
-                    // İşlem ID'sini al
-                    int processId = GetProcessIdFromHandle(hProcess);
+                    // Hedef işlemin PID'sini al
+                    int processId = (int)Kernel32Api.GetProcessId(hProcess);
                     Console.WriteLine($"[DEBUG] Hedef process PID: {processId}");
 
-                    // Her handle için döngü
                     for (int i = 0; i < handleInfo.NumberOfHandles; i++)
                     {
                         try
                         {
-                            SYSTEM_HANDLE_TABLE_ENTRY_INFO handleEntry = Marshal.PtrToStructure<SYSTEM_HANDLE_TABLE_ENTRY_INFO>(
+                            var handleEntry = Marshal.PtrToStructure<SYSTEM_HANDLE_TABLE_ENTRY_INFO>(
                                 IntPtr.Add(handleArrayPtr, i * Marshal.SizeOf(typeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO)))
                             );
 
-                            // Debug loglama - ilk 5 handle için
+                            // Debug: ilk birkaç handle için log
                             if (i < 5)
                             {
                                 Console.WriteLine($"[DEBUG] Handle {i}: PID={handleEntry.UniqueProcessId}, HandleValue=0x{handleEntry.HandleValue:X}, TypeIndex={handleEntry.ObjectTypeIndex}, GrantedAccess={handleEntry.GrantedAccess:X}");
                             }
 
-                            // Bu handle bizim işlemimize ait mi kontrol et - type casting düzeltmesi
+                            // Hedef işleme ait olanları filtrele
                             if (handleEntry.UniqueProcessId == (ushort)processId)
                             {
-                                HandleInfo handleInfoStruct = new HandleInfo
+                                var handleInfoStruct = new HandleInfo
                                 {
                                     HandleValue = handleEntry.HandleValue,
                                     GrantedAccess = handleEntry.GrantedAccess,
@@ -99,17 +102,13 @@ namespace WinEmuDump
                                     ObjectPointer = handleEntry.Object
                                 };
 
-                                // Handle türünü belirlemeye çalış - cache tabanlı, güvenilir yöntem
+                                // Tür adı
                                 if (GetHandleTypeName(hProcess, handleEntry, out string typeName))
-                                {
                                     handleInfoStruct.TypeName = typeName;
-                                }
 
-                                // Object name'i belirlemeye çalış (tüm handle'lar için dene)
+                                // Obje adı
                                 if (GetHandleObjectName(hProcess, handleEntry, out string objectName))
-                                {
                                     handleInfoStruct.ObjectName = objectName;
-                                }
 
                                 handleList.Add(handleInfoStruct);
                             }
@@ -117,7 +116,6 @@ namespace WinEmuDump
                         catch (Exception ex)
                         {
                             Console.WriteLine($"[WARNING] Handle {i} işlenirken hata: {ex.Message}");
-                            // Devam et, diğer handle'ları işle
                         }
                     }
 
@@ -137,7 +135,7 @@ namespace WinEmuDump
         }
 
         /// <summary>
-        /// Handle türünü belirler (daha güvenilir: ilk önce cache, yoksa handle üzerinden sorgula ve cache'le)
+        /// Handle türünü belirler (önce cache, yoksa NtQueryObject ile çöz ve cache'e yaz).
         /// </summary>
         private static bool GetHandleTypeName(IntPtr targetProcessHandle, SYSTEM_HANDLE_TABLE_ENTRY_INFO handleEntry, out string typeName)
         {
@@ -145,6 +143,7 @@ namespace WinEmuDump
 
             try
             {
+                // Önce cache
                 lock (_mapLock)
                 {
                     if (_objectTypeMap.TryGetValue(handleEntry.ObjectTypeIndex, out var cached))
@@ -154,13 +153,12 @@ namespace WinEmuDump
                     }
                 }
 
-                // Cache'de yoksa, handle'ı duplicate edip NtQueryObject(ObjectTypeInformation) ile tip bilgisini al
+                // Cache'de yoksa handle üzerinden sorgula
                 string resolved = QueryTypeFromHandle(targetProcessHandle, handleEntry.HandleValue);
                 if (!string.IsNullOrEmpty(resolved))
                 {
                     lock (_mapLock)
                     {
-                        // Overwrite veya ekle
                         _objectTypeMap[handleEntry.ObjectTypeIndex] = resolved;
                     }
 
@@ -168,7 +166,7 @@ namespace WinEmuDump
                     return true;
                 }
 
-                // Eğer tip halen alınamadıysa - çok sınırlı ve güvenilir fallback (sadece bazı genel tipleri gösterir)
+                // Sınırlı fallback eşlemeleri
                 var fallback = new Dictionary<byte, string>
                 {
                     { 0x02, "Directory" },
@@ -184,9 +182,8 @@ namespace WinEmuDump
                     { 0x0C, "Semaphore" },
                     { 0x0D, "Timer" },
                     { 0x13, "File" },
-                    { 0x32, "EtwRegistration" }, // 👈 eklendi
+                    { 0x32, "EtwRegistration" }
                 };
-
 
                 if (fallback.TryGetValue(handleEntry.ObjectTypeIndex, out var fb))
                 {
@@ -194,7 +191,7 @@ namespace WinEmuDump
                     return true;
                 }
 
-                // Son çare: index'i döndür
+                // Son çare
                 typeName = $"Type_{handleEntry.ObjectTypeIndex}";
                 return true;
             }
@@ -206,18 +203,18 @@ namespace WinEmuDump
         }
 
         /// <summary>
-        /// Verilen hedef süreçten verilen handle değerini duplicate edip NtQueryObject ile ObjectTypeInformation alır.
-        /// Bu yöntem, ObjectTypeIndex'e sabit bir isim atamaya göre çok daha güvenilirdir.
+        /// Verilen handle değerini duplicate edip NtQueryObject(ObjectTypeInformation) ile tip adını döndürür.
         /// </summary>
         private static string QueryTypeFromHandle(IntPtr targetProcessHandle, uint handleValue)
         {
             IntPtr duplicated = IntPtr.Zero;
+
             try
             {
-                bool dupOk = DuplicateHandle(
+                bool dupOk = Kernel32Api.DuplicateHandle(
                     targetProcessHandle,
                     (IntPtr)handleValue,
-                    GetCurrentProcess(),
+                    Kernel32Api.GetCurrentProcess(),
                     out duplicated,
                     0,
                     false,
@@ -225,33 +222,24 @@ namespace WinEmuDump
                 );
 
                 if (!dupOk || duplicated == IntPtr.Zero)
-                {
-                    // DuplicateHandle bazen başarısız olabilir (örn. farklı yetkiler, kapanmış handle, vs.)
                     return null;
-                }
 
-                // İlk olarak 0 uzunluğu ile bilgi talep et - gerekli bufferSize'ı al
                 const uint ObjectTypeInformation = 2;
                 uint returnLength = 0;
-                uint status = NtQueryObject(duplicated, ObjectTypeInformation, IntPtr.Zero, 0, out returnLength);
+                uint status = NativeApi.NtQueryObject(duplicated, ObjectTypeInformation, IntPtr.Zero, 0, out returnLength);
 
                 if (returnLength == 0 || returnLength > 0x10000)
-                {
-                    // Anormal durum
                     return null;
-                }
 
                 IntPtr buffer = Marshal.AllocHGlobal((int)returnLength);
                 try
                 {
-                    status = NtQueryObject(duplicated, ObjectTypeInformation, buffer, returnLength, out returnLength);
+                    status = NativeApi.NtQueryObject(duplicated, ObjectTypeInformation, buffer, returnLength, out returnLength);
                     if (status != 0 || returnLength == 0)
                         return null;
 
-                    // OBJECT_TYPE_INFORMATION içinde TypeName UNICODE_STRING ile başlar.
-                    // UNICODE_STRING: USHORT Length; USHORT MaximumLength; PVOID Buffer;
+                    // OBJECT_TYPE_INFORMATION içindeki UNICODE_STRING TypeName'i oku
                     short nameLen = Marshal.ReadInt16(buffer, 0);
-                    // short nameMax = Marshal.ReadInt16(buffer, 2);
                     IntPtr nameBuffer = Marshal.ReadIntPtr(buffer, IntPtr.Size == 8 ? 8 : 4);
 
                     if (nameBuffer == IntPtr.Zero || nameLen <= 0)
@@ -274,15 +262,12 @@ namespace WinEmuDump
             finally
             {
                 if (duplicated != IntPtr.Zero)
-                {
-                    NtClose(duplicated);
-                }
+                    NativeApi.NtClose(duplicated);
             }
         }
 
         /// <summary>
-        /// Handle object name'ini belirler (File path, Registry key, etc.)
-        /// (Mevcut implementasyonunuzu korudum, küçük güvenlik kontrolü eklendi)
+        /// Handle object name'ini belirler (dosya yolu, registry key vb.).
         /// </summary>
         private static bool GetHandleObjectName(IntPtr hProcess, SYSTEM_HANDLE_TABLE_ENTRY_INFO handleEntry, out string objectName)
         {
@@ -290,13 +275,12 @@ namespace WinEmuDump
 
             try
             {
-                // DuplicateHandle kullan
                 IntPtr duplicatedHandle = IntPtr.Zero;
 
-                if (!DuplicateHandle(
+                if (!Kernel32Api.DuplicateHandle(
                     hProcess,
                     (IntPtr)handleEntry.HandleValue,
-                    GetCurrentProcess(),
+                    Kernel32Api.GetCurrentProcess(),
                     out duplicatedHandle,
                     0,
                     false,
@@ -310,18 +294,14 @@ namespace WinEmuDump
                     const uint ObjectNameInformation = 1;
                     uint returnLength = 0;
 
-                    // İlk çağrı - buffer boyutu belirleme
-                    uint ntStatus = NtQueryObject(duplicatedHandle, ObjectNameInformation, IntPtr.Zero, 0, out returnLength);
-
-                    if (returnLength == 0 || returnLength > 0x10000) // 64KB limit
-                    {
+                    uint ntStatus = NativeApi.NtQueryObject(duplicatedHandle, ObjectNameInformation, IntPtr.Zero, 0, out returnLength);
+                    if (returnLength == 0 || returnLength > 0x10000)
                         return false;
-                    }
 
                     IntPtr buffer = Marshal.AllocHGlobal((int)returnLength);
                     try
                     {
-                        ntStatus = NtQueryObject(duplicatedHandle, ObjectNameInformation, buffer, returnLength, out returnLength);
+                        ntStatus = NativeApi.NtQueryObject(duplicatedHandle, ObjectNameInformation, buffer, returnLength, out returnLength);
                         if (ntStatus == 0 && returnLength > 0)
                         {
                             short nameLength = Marshal.ReadInt16(buffer, 0);
@@ -345,7 +325,7 @@ namespace WinEmuDump
                 finally
                 {
                     if (duplicatedHandle != IntPtr.Zero)
-                        NtClose(duplicatedHandle);
+                        NativeApi.NtClose(duplicatedHandle);
                 }
 
                 return false;
@@ -356,66 +336,5 @@ namespace WinEmuDump
                 return false;
             }
         }
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool DuplicateHandle(
-            IntPtr hSourceProcessHandle,
-            IntPtr hSourceHandle,
-            IntPtr hTargetProcessHandle,
-            out IntPtr lpTargetHandle,
-            uint dwDesiredAccess,
-            bool bInheritHandle,
-            uint dwOptions);
-
-        /// <summary>
-        /// Process handle'ından process ID'sini çıkarır
-        /// </summary>
-        /// <param name="hProcess">Process handle'ı</param>
-        /// <returns>Process ID</returns>
-        private static int GetProcessIdFromHandle(IntPtr hProcess)
-        {
-            try
-            {
-                // Kernel32.dll'deki GetProcessId fonksiyonunu kullan
-                IntPtr kernel32 = LoadLibrary("kernel32.dll");
-                IntPtr getProcessId = GetProcAddress(kernel32, "GetProcessId");
-
-                if (getProcessId != IntPtr.Zero)
-                {
-                    GetProcessIdDelegate getPid = Marshal.GetDelegateForFunctionPointer<GetProcessIdDelegate>(getProcessId);
-                    return (int)getPid(hProcess);
-                }
-            }
-            catch
-            {
-                // Fallback: Mevcut process ise kendi ID'mizi döndür
-                return System.Diagnostics.Process.GetCurrentProcess().Id;
-            }
-
-            return 0;
-        }
-
-        [DllImport("kernel32.dll")]
-        private static extern IntPtr LoadLibrary(string dllName);
-
-        [DllImport("kernel32.dll")]
-        private static extern IntPtr GetProcAddress(IntPtr hModule, string procedureName);
-
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate uint GetProcessIdDelegate(IntPtr hProcess);
-    }
-
-    /// <summary>
-    /// Handle bilgilerini tutan struct
-    /// </summary>
-    public struct HandleInfo
-    {
-        public uint HandleValue;
-        public uint GrantedAccess;
-        public byte ObjectTypeIndex;
-        public byte HandleAttributes;
-        public IntPtr ObjectPointer;
-        public string TypeName;
-        public string ObjectName;  // Object name (File path, Registry key, etc.)
     }
 }

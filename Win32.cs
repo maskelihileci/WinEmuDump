@@ -182,63 +182,65 @@ namespace WinEmuDump
 
 
         ///////////////// FUNCTIONS /////////////////
-        [DllImport("ntdll.dll")]
-        public static extern uint NtOpenProcess(ref IntPtr ProcessHandle, uint DesiredAccess, ref OBJECT_ATTRIBUTES ObjectAttributes, ref CLIENT_ID processId);
+        // DllImport functions have been moved to separate files:
+        // - NativeApi.cs (NT DLL functions)
+        // - Kernel32Api.cs (Kernel32 DLL functions)
+        // - PsApi.cs (PSAPI DLL functions)
+        
+        // THREADINFOCLASS enum (sadece ihtiyacımız olan)
+        public const uint ThreadBasicInformation = 0;
+        public const uint ThreadStackInformation = 5;
+        public const uint ThreadNameInformation = 0x24;
 
-        [DllImport("ntdll.dll")]
-        public static extern uint NtReadVirtualMemory(IntPtr hProcess, IntPtr lpBaseAddress, [Out] byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead);
+        /// <summary>
+        /// THREAD_BASIC_INFORMATION yapısı - Thread temel bilgileri için
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct THREAD_BASIC_INFORMATION
+        {
+            public uint ExitStatus;
+            public IntPtr TebBaseAddress;
+            public CLIENT_ID ClientId;
+            public IntPtr AffinityMask;
+            public uint Priority;
+            public uint BasePriority;
+        }
 
-        [DllImport("ntdll.dll")]
-        public static extern uint NtQueryVirtualMemory(IntPtr hProcess, IntPtr lpAddress, uint MemoryInformationClass, out MEMORY_BASIC_INFORMATION MemoryInformation, uint MemoryInformationLength, out uint ReturnLength);
+        /// <summary>
+        /// THREAD_STACK_INFORMATION yapısı - Thread stack bilgileri için
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct THREAD_STACK_INFORMATION
+        {
+            public IntPtr StackBase;
+            public IntPtr StackLimit;
+            public IntPtr StackCommit;
+            public IntPtr StackCommitMax;
+            public IntPtr StackReserved;
+        }
 
-        [DllImport("ntdll.dll")]
-        public static extern uint NtOpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, ref IntPtr TokenHandle);
+        ///////////////// MEMORY STATUS STRUCTS /////////////////
 
-        [DllImport("ntdll.dll")]
-        public static extern uint NtAdjustPrivilegesToken(IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, uint BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MEMORYSTATUSEX
+        {
+            public uint dwLength;
+            public uint dwMemoryLoad;
+            public ulong ullTotalPhys;
+            public ulong ullAvailPhys;
+            public ulong ullTotalPageFile;
+            public ulong ullAvailPageFile;
+            public ulong ullTotalVirtual;
+            public ulong ullAvailVirtual;
+            public ulong sullAvailExtendedVirtual;
+        }
 
-        [DllImport("ntdll.dll")]
-        public static extern uint NtClose(IntPtr hObject);
+        // DllImport functions have been moved to separate files:
+        // - NativeApi.cs (NT DLL functions)
+        // - Kernel32Api.cs (Kernel32 DLL functions)
+        // - PsApi.cs (PSAPI DLL functions)
 
-        [DllImport("ntdll.dll", SetLastError = true)]
-        public static extern uint RtlGetVersion(ref OSVERSIONINFOEX lpVersionInformation);
-
-        [DllImport("ntdll.dll", SetLastError = true)]
-        public static extern uint NtQueryInformationProcess(IntPtr processHandle, int processInformationClass, IntPtr pbi, uint processInformationLength, out uint returnLength);
-
-        [DllImport("ntdll.dll")]
-        public static extern uint NtQuerySystemInformation(uint SystemInformationClass, IntPtr SystemInformation, uint SystemInformationLength, out uint ReturnLength);
-
-        [DllImport("ntdll.dll")]
-        public static extern uint NtOpenThread(ref IntPtr ThreadHandle, uint DesiredAccess, ref OBJECT_ATTRIBUTES ObjectAttributes, ref CLIENT_ID ClientId);
-
-        [DllImport("ntdll.dll")]
-        public static extern uint NtGetContextThread(IntPtr ThreadHandle, ref CONTEXT Context);
-
-        [DllImport("ntdll.dll")]
-        public static extern uint NtQueryInformationThread(IntPtr ThreadHandle, uint ThreadInformationClass, IntPtr ThreadInformation, uint ThreadInformationLength, out uint ReturnLength);
-
-        [DllImport("ntdll.dll")]
-        public static extern uint NtQueryObject(IntPtr Handle, uint ObjectInformationClass, IntPtr ObjectInformation, uint ObjectInformationLength, out uint ReturnLength);
-
-        [DllImport("kernel32.dll")]
-        public static extern bool IsWow64Process(IntPtr hProcess, out bool Wow64Process);
-
-        [DllImport("kernel32.dll")]
-        public static extern IntPtr GetCurrentProcess();
-
-        [DllImport("kernel32.dll")]
-        public static extern void GetSystemInfo(out SYSTEM_INFO lpSystemInfo);
-
-        [DllImport("kernel32.dll")]
-        public static extern uint GetTimeZoneInformation(out TIME_ZONE_INFORMATION lpTimeZoneInformation);
-
-        [DllImport("kernel32.dll")]
-        public static extern uint GetProcessId(IntPtr Process);
-
-        [DllImport("psapi.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool GetProcessMemoryInfo(IntPtr hProcess, out PROCESS_MEMORY_COUNTERS_EX ppsmemCounters, uint cb);
+        ///////////////// PE PARSING FUNCTIONS FOR FUNCTION TABLE /////////////////
 
         ///////////////// TIME ZONE STRUCT /////////////////
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -305,6 +307,20 @@ namespace WinEmuDump
         {
             public IntPtr UniqueProcess;
             public IntPtr UniqueThread;
+        }
+
+        /// <summary>
+        /// PROCESS_BASIC_INFORMATION yapısı - Process bilgileri için
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_BASIC_INFORMATION
+        {
+            public IntPtr Reserved1;
+            public IntPtr PebBaseAddress;
+            public IntPtr Reserved2;
+            public IntPtr Reserved3;
+            public IntPtr UniqueProcessId;
+            public IntPtr Reserved4;
         }
 
 
@@ -766,9 +782,9 @@ namespace WinEmuDump
             public uint AvailableVirtual;
         }
 
-        // PROCESS_MEMORY_COUNTERS_EX - Extended process memory counters
+        // PROCESS_MEMORY_COUNTERS - Basic process memory counters (40 bytes)
         [StructLayout(LayoutKind.Sequential)]
-        public struct PROCESS_MEMORY_COUNTERS_EX
+        public struct PROCESS_MEMORY_COUNTERS
         {
             public uint cb;
             public uint PageFaultCount;
@@ -780,7 +796,23 @@ namespace WinEmuDump
             public uint QuotaNonPagedPoolUsage;
             public uint PagefileUsage;
             public uint PeakPagefileUsage;
-            public uint PrivateUsage;
+        }
+
+        // PROCESS_MEMORY_COUNTERS_EX - Extended process memory counters (72 bytes - Vista+)
+        [StructLayout(LayoutKind.Sequential, Pack = 8)] // Pack=8 ile 64-bit alignment
+        public struct PROCESS_MEMORY_COUNTERS_EX
+        {
+            public uint cb;
+            public uint PageFaultCount;
+            public uint PeakWorkingSetSize;     // 32-bit
+            public uint WorkingSetSize;         // 32-bit
+            public uint QuotaPeakPagedPoolUsage;
+            public uint QuotaPagedPoolUsage;
+            public uint QuotaPeakNonPagedPoolUsage;
+            public uint QuotaNonPagedPoolUsage;
+            public uint PagefileUsage;
+            public uint PeakPagefileUsage;
+            public uint PrivateUsage;           // Vista+ için eklendi
         }
 
         ///////////////// ADVANCED MINIDUMP STREAM STRUCTS /////////////////
@@ -923,7 +955,7 @@ namespace WinEmuDump
             public uint Reserved;
         }
 
-        // MINIDUMP_FUNCTION_TABLE_DESCRIPTOR - Function table descriptor
+        // MINIDUMP_FUNCTION_TABLE_DESCRIPTOR - Function table descriptor (Microsoft format)
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
         public struct MINIDUMP_FUNCTION_TABLE_DESCRIPTOR
         {
@@ -931,10 +963,10 @@ namespace WinEmuDump
             public ulong MaximumAddress;
             public ulong BaseAddress;
             public uint EntryCount;
-            public ulong FunctionTableRva; // RVA to function entries
+            public uint SizeOfAlignPad; // Resmi Microsoft format'ta var (genellikle 0)
         }
 
-        // MINIDUMP_FUNCTION_TABLE_STREAM - Function table stream header
+        // MINIDUMP_FUNCTION_TABLE_STREAM - Function table stream header (Microsoft format)
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
         public struct MINIDUMP_FUNCTION_TABLE_STREAM
         {
@@ -943,6 +975,7 @@ namespace WinEmuDump
             public uint SizeOfNativeDescriptor;
             public uint SizeOfFunctionEntry;
             public uint NumberOfDescriptors;
+            public uint SizeOfAlignPad; // Resmi Microsoft format'ta var (genellikle 0)
         }
 
         // MINIDUMP_PROCESS_VM_COUNTERS - Process VM counters stream
@@ -967,6 +1000,189 @@ namespace WinEmuDump
         {
             public uint NumOfEntries;
             public uint Version;
+        }
+
+        ///////////////// SYSTEM MEMORY INFO STRUCTS /////////////////
+
+        /// <summary>
+        /// MiniDumpSystemBasicInformation class - Sistem bellek bilgilerini wrapper olarak sağlar
+        /// </summary>
+        public class MiniDumpSystemBasicInformation
+        {
+            private MINIDUMP_SYSTEM_BASIC_INFORMATION _systemBasicInformation;
+            private MiniDumpFile _owner;
+
+            internal MiniDumpSystemBasicInformation(MINIDUMP_SYSTEM_BASIC_INFORMATION systemBasicInformation, MiniDumpFile owner)
+            {
+                _systemBasicInformation = systemBasicInformation;
+                _owner = owner;
+            }
+
+            public UInt32 TimerResolution { get { return _systemBasicInformation.TimerResolution; } }
+            public UInt32 PageSize { get { return _systemBasicInformation.PageSize; } }
+            public UInt32 NumberOfPhysicalPages { get { return _systemBasicInformation.NumberOfPhysicalPages; } }
+            public UInt32 LowestPhysicalPageNumber { get { return _systemBasicInformation.LowestPhysicalPageNumber; } }
+            public UInt32 HighestPhysicalPageNumber { get { return _systemBasicInformation.HighestPhysicalPageNumber; } }
+            public UInt32 AllocationGranularity { get { return _systemBasicInformation.AllocationGranularity; } }
+            public UInt64 MinimumUserModeAddress { get { return _systemBasicInformation.MinimumUserModeAddress; } }
+            public UInt64 MaximumUserModeAddress { get { return _systemBasicInformation.MaximumUserModeAddress; } }
+            public UInt64 ActiveProcessorsAffinityMask { get { return _systemBasicInformation.ActiveProcessorsAffinityMask; } }
+            public UInt32 NumberOfProcessors { get { return _systemBasicInformation.NumberOfProcessors; } }
+        }
+
+        /// <summary>
+        /// Placeholder class for MiniDumpFile (minimal implementation)
+        /// </summary>
+        public class MiniDumpFile
+        {
+            // Minimal implementation for MiniDumpSystemBasicInformation
+        }
+
+        /// <summary>
+        /// MINIDUMP_SYSTEM_MEMORY_INFO_1 - Ana bellek bilgi container'ı
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_SYSTEM_MEMORY_INFO_1
+        {
+            public ushort Revision;
+            public ushort Flags;
+            public MINIDUMP_SYSTEM_BASIC_INFORMATION BasicInfo;
+            public MINIDUMP_SYSTEM_FILECACHE_INFORMATION FileCacheInfo;
+            public MINIDUMP_SYSTEM_BASIC_PERFORMANCE_INFORMATION BasicPerfInfo;
+            public MINIDUMP_SYSTEM_PERFORMANCE_INFORMATION PerfInfo;
+        }
+
+        /// <summary>
+        /// MINIDUMP_SYSTEM_BASIC_INFORMATION - Temel sistem bilgileri
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_SYSTEM_BASIC_INFORMATION
+        {
+            public UInt32 TimerResolution;
+            public UInt32 PageSize;
+            public UInt32 NumberOfPhysicalPages;
+            public UInt32 LowestPhysicalPageNumber;
+            public UInt32 HighestPhysicalPageNumber;
+            public UInt32 AllocationGranularity;
+            public UInt64 MinimumUserModeAddress;
+            public UInt64 MaximumUserModeAddress;
+            public UInt64 ActiveProcessorsAffinityMask;
+            public UInt32 NumberOfProcessors;
+        }
+
+        /// <summary>
+        /// MINIDUMP_SYSTEM_FILECACHE_INFORMATION - Dosya cache bilgileri
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_SYSTEM_FILECACHE_INFORMATION
+        {
+            public UInt64 CurrentSize;
+            public UInt64 PeakSize;
+            public UInt32 PageFaultCount;
+            public UInt64 MinimumWorkingSet;
+            public UInt64 MaximumWorkingSet;
+            public UInt64 CurrentSizeIncludingTransitionInPages;
+            public UInt64 PeakSizeIncludingTransitionInPages;
+            public UInt32 TransitionRePurposeCount;
+            public UInt32 Flags;
+        }
+
+        /// <summary>
+        /// MINIDUMP_SYSTEM_BASIC_PERFORMANCE_INFORMATION - Temel performans bilgileri
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_SYSTEM_BASIC_PERFORMANCE_INFORMATION
+        {
+            public UInt64 AvailablePages;
+            public UInt64 CommittedPages;
+            public UInt64 CommitLimit;
+            public UInt64 PeakCommitment;
+        }
+
+        /// <summary>
+        /// MINIDUMP_SYSTEM_PERFORMANCE_INFORMATION - Detaylı performans bilgileri
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct MINIDUMP_SYSTEM_PERFORMANCE_INFORMATION
+        {
+            public UInt64 IdleProcessTime;
+            public UInt64 IoReadTransferCount;
+            public UInt64 IoWriteTransferCount;
+            public UInt64 IoOtherTransferCount;
+            public UInt32 IoReadOperationCount;
+            public UInt32 IoWriteOperationCount;
+            public UInt32 IoOtherOperationCount;
+            public UInt32 AvailablePages;
+            public UInt32 CommittedPages;
+            public UInt32 CommitLimit;
+            public UInt32 PeakCommitment;
+            public UInt32 PageFaultCount;
+            public UInt32 CopyOnWriteCount;
+            public UInt32 TransitionCount;
+            public UInt32 CacheTransitionCount;
+            public UInt32 DemandZeroCount;
+            public UInt32 PageReadCount;
+            public UInt32 PageReadIoCount;
+            public UInt32 CacheReadCount;
+            public UInt32 CacheIoCount;
+            public UInt32 DirtyPagesWriteCount;
+            public UInt32 DirtyWriteIoCount;
+            public UInt32 MappedPagesWriteCount;
+            public UInt32 MappedWriteIoCount;
+            public UInt32 PagedPoolPages;
+            public UInt32 NonPagedPoolPages;
+            public UInt32 PagedPoolAllocs;
+            public UInt32 PagedPoolFrees;
+            public UInt32 NonPagedPoolAllocs;
+            public UInt32 NonPagedPoolFrees;
+            public UInt32 FreeSystemPtes;
+            public UInt32 ResidentSystemCodePage;
+            public UInt32 TotalSystemDriverPages;
+            public UInt32 TotalSystemCodePages;
+            public UInt32 NonPagedPoolLookasideHits;
+            public UInt32 PagedPoolLookasideHits;
+            public UInt32 AvailablePagedPoolPages;
+            public UInt32 ResidentSystemCachePage;
+            public UInt32 ResidentPagedPoolPage;
+            public UInt32 ResidentSystemDriverPage;
+            public UInt32 CcFastReadNoWait;
+            public UInt32 CcFastReadWait;
+            public UInt32 CcFastReadResourceMiss;
+            public UInt32 CcFastReadNotPossible;
+            public UInt32 CcFastMdlReadNoWait;
+            public UInt32 CcFastMdlReadWait;
+            public UInt32 CcFastMdlReadResourceMiss;
+            public UInt32 CcFastMdlReadNotPossible;
+            public UInt32 CcMapDataNoWait;
+            public UInt32 CcMapDataWait;
+            public UInt32 CcMapDataNoWaitMiss;
+            public UInt32 CcMapDataWaitMiss;
+            public UInt32 CcPinMappedDataCount;
+            public UInt32 CcPinReadNoWait;
+            public UInt32 CcPinReadWait;
+            public UInt32 CcPinReadNoWaitMiss;
+            public UInt32 CcPinReadWaitMiss;
+            public UInt32 CcCopyReadNoWait;
+            public UInt32 CcCopyReadWait;
+            public UInt32 CcCopyReadNoWaitMiss;
+            public UInt32 CcCopyReadWaitMiss;
+            public UInt32 CcMdlReadNoWait;
+            public UInt32 CcMdlReadWait;
+            public UInt32 CcMdlReadNoWaitMiss;
+            public UInt32 CcMdlReadWaitMiss;
+            public UInt32 CcReadAheadIos;
+            public UInt32 CcLazyWriteIos;
+            public UInt32 CcLazyWritePages;
+            public UInt32 CcDataFlushes;
+            public UInt32 CcDataPages;
+            public UInt32 ContextSwitches;
+            public UInt32 FirstLevelTbFills;
+            public UInt32 SecondLevelTbFills;
+            public UInt32 SystemCalls;
+            public UInt64 CcTotalDirtyPages;
+            public UInt64 CcDirtyPageThreshold;
+            public Int64 ResidentAvailablePages; //LONG64
+            public UInt64 SharedCommittedPages;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
@@ -1153,6 +1369,7 @@ namespace WinEmuDump
             public MINIDUMP_LOCATION_DESCRIPTOR ThreadContext;
         }
 
+
         // MINIDUMP_THREAD_LIST - Thread list stream header
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
         public struct MINIDUMP_THREAD_LIST
@@ -1211,5 +1428,326 @@ namespace WinEmuDump
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 40)]
             public string DbgBldStr;
         }
+
+        ///////////////// PE PARSING STRUCTS FOR FUNCTION TABLE /////////////////
+
+        // RTL_PROCESS_MODULE_INFORMATION - Process modül bilgilerini almak için
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RTL_PROCESS_MODULE_INFORMATION
+        {
+            public IntPtr Section;
+            public IntPtr MappedBase;
+            public IntPtr ImageBase;
+            public uint ImageSize;
+            public uint Flags;
+            public ushort LoadOrderIndex;
+            public ushort InitOrderIndex;
+            public ushort LoadCount;
+            public ushort OffsetToFileName;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)]
+            public byte[] FullPathName;
+
+            // Constructor ile FullPathName array'ini başlat
+            public RTL_PROCESS_MODULE_INFORMATION(bool initialize)
+            {
+                Section = IntPtr.Zero;
+                MappedBase = IntPtr.Zero;
+                ImageBase = IntPtr.Zero;
+                ImageSize = 0;
+                Flags = 0;
+                LoadOrderIndex = 0;
+                InitOrderIndex = 0;
+                LoadCount = 0;
+                OffsetToFileName = 0;
+                FullPathName = initialize ? new byte[256] : null;
+            }
+        }
+
+        // FunctionExport - Export function bilgileri
+        [StructLayout(LayoutKind.Sequential)]
+        public struct FunctionExport
+        {
+            public string FunctionName;
+            public IntPtr FunctionAddress;
+            public uint Ordinal;
+        }
+
+        // IMAGE_DOS_HEADER - PE dosya başlangıcı (Pack=1 ile binary alignment)
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        public struct IMAGE_DOS_HEADER
+        {
+            public ushort e_magic;    // MZ signature @ 0x00
+            public ushort e_cblp;     // @ 0x02
+            public ushort e_cp;       // @ 0x04
+            public ushort e_crlc;     // @ 0x06
+            public ushort e_cparhdr;  // @ 0x08
+            public ushort e_minalloc; // @ 0x0A
+            public ushort e_maxalloc; // @ 0x0C
+            public ushort e_ss;       // @ 0x0E
+            public ushort e_sp;       // @ 0x10
+            public ushort e_csum;     // @ 0x12
+            public ushort e_ip;       // @ 0x14
+            public ushort e_cs;       // @ 0x16
+            public ushort e_lfarlc;   // @ 0x18
+            public ushort e_ovno;     // @ 0x1A
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
+            public ushort[] e_res4;   // @ 0x1C - 16 bytes
+            public ushort e_oemid;    // @ 0x2C
+            public ushort e_oeminfo;  // @ 0x2E
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
+            public ushort[] e_res2;   // @ 0x30 - 40 bytes
+            public int e_lfanew;      // PE header offset @ 0x3C (64 bytes total)
+        }
+
+        // IMAGE_FILE_HEADER - PE file header
+        [StructLayout(LayoutKind.Sequential)]
+        public struct IMAGE_FILE_HEADER
+        {
+            public ushort Machine;
+            public ushort NumberOfSections;
+            public uint TimeDateStamp;
+            public uint PointerToSymbolTable;
+            public uint NumberOfSymbols;
+            public ushort SizeOfOptionalHeader;
+            public ushort Characteristics;
+        }
+
+        // IMAGE_DATA_DIRECTORY - PE data directory
+        [StructLayout(LayoutKind.Sequential)]
+        public struct IMAGE_DATA_DIRECTORY
+        {
+            public uint VirtualAddress;
+            public uint Size;
+        }
+
+        // IMAGE_OPTIONAL_HEADER - PE optional header
+        [StructLayout(LayoutKind.Sequential)]
+        public struct IMAGE_OPTIONAL_HEADER
+        {
+            public ushort Magic;
+            public byte MajorLinkerVersion;
+            public byte MinorLinkerVersion;
+            public uint SizeOfCode;
+            public uint SizeOfInitializedData;
+            public uint SizeOfUninitializedData;
+            public uint AddressOfEntryPoint;
+            public uint BaseOfCode;
+            public uint BaseOfData;
+            public uint ImageBase;
+            public uint SectionAlignment;
+            public uint FileAlignment;
+            public ushort MajorOperatingSystemVersion;
+            public ushort MinorOperatingSystemVersion;
+            public ushort MajorImageVersion;
+            public ushort MinorImageVersion;
+            public ushort MajorSubsystemVersion;
+            public ushort MinorSubsystemVersion;
+            public uint Win32VersionValue;
+            public uint SizeOfImage;
+            public uint SizeOfHeaders;
+            public uint CheckSum;
+            public ushort Subsystem;
+            public ushort DllCharacteristics;
+            public uint SizeOfStackReserve;
+            public uint SizeOfStackCommit;
+            public uint SizeOfHeapReserve;
+            public uint SizeOfHeapCommit;
+            public uint LoaderFlags;
+            public uint NumberOfRvaAndSizes;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+            public IMAGE_DATA_DIRECTORY[] DataDirectory;
+        }
+
+        // IMAGE_NT_HEADERS64 - PE header (64-bit)
+        [StructLayout(LayoutKind.Sequential)]
+        public struct IMAGE_NT_HEADERS64
+        {
+            public uint Signature;        // PE signature (PE\0\0)
+            public IMAGE_FILE_HEADER FileHeader;
+            public IMAGE_OPTIONAL_HEADER OptionalHeader;
+        }
+
+        // IMAGE_EXPORT_DIRECTORY - Export directory table
+        [StructLayout(LayoutKind.Sequential)]
+        public struct IMAGE_EXPORT_DIRECTORY
+        {
+            public uint Characteristics;
+            public uint TimeDateStamp;
+            public ushort MajorVersion;
+            public ushort MinorVersion;
+            public uint Name;
+            public uint Base;
+            public uint NumberOfFunctions;
+            public uint NumberOfNames;
+            public uint AddressOfFunctions;     // RVA to function address array
+            public uint AddressOfNames;         // RVA to function name array
+            public uint AddressOfNameOrdinals;  // RVA to function ordinal array
+        }
+
+        // Constants for PE parsing
+        public const uint IMAGE_DOS_SIGNATURE = 0x5A4D;  // "MZ"
+        public const uint IMAGE_NT_SIGNATURE = 0x00004550; // "PE\0\0"
+        public const ushort IMAGE_FILE_MACHINE_AMD64 = 0x8664;
+        public const ushort IMAGE_FILE_MACHINE_I386 = 0x014c;
+        public const uint IMAGE_DIRECTORY_ENTRY_EXPORT = 0;  // Export Directory
+        public const uint IMAGE_DIRECTORY_ENTRY_EXCEPTION = 3; // Exception Directory
+
+        // RUNTIME_FUNCTION struct for exception unwinding (x64)
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RUNTIME_FUNCTION
+        {
+            public uint BeginAddress;    // Function start RVA
+            public uint EndAddress;      // Function end RVA
+            public uint UnwindInfoAddress; // Unwind info RVA
+        }
+
+        // UNWIND_INFO struct for exception unwinding
+        [StructLayout(LayoutKind.Sequential)]
+        public struct UNWIND_INFO
+        {
+            public byte Version;         // Version (0x1)
+            public byte Flags;           // Flags
+            public byte SizeOfProlog;    // Size of function prologue
+            public byte CountOfCodes;    // Number of unwind codes
+            public byte FrameRegister;   // Frame register (0 = no frame register)
+            public byte FrameOffset;     // Frame register offset
+        }
+
+        // UNWIND_CODE struct for unwind codes
+        [StructLayout(LayoutKind.Sequential)]
+        public struct UNWIND_CODE
+        {
+            public byte CodeOffset;      // Offset in prolog
+            public byte UnwindOp;        // Unwind operation
+            public byte OpInfo;          // Operation info
+        }
+
+        ///////////////// PE SECTION HEADER /////////////////
+
+        // IMAGE_SECTION_HEADER - PE section header structure
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        public struct PE_SECTION_HEADER
+        {
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
+            public byte[] Name;              // 8 bytes - Section name
+            public uint VirtualSize;         // 4 bytes - Size of section in memory
+            public uint VirtualAddress;      // 4 bytes - RVA of section in memory
+            public uint SizeOfRawData;       // 4 bytes - Size of section in file
+            public uint PointerToRawData;    // 4 bytes - File offset to section
+            public uint PointerToRelocations; // 4 bytes - File offset to relocations
+            public uint PointerToLinenumbers; // 4 bytes - File offset to line numbers
+            public ushort NumberOfRelocations; // 2 bytes - Number of relocations
+            public ushort NumberOfLinenumbers; // 2 bytes - Number of line numbers
+            public uint Characteristics;     // 4 bytes - Section flags
+        }
+
+        
+        /// <summary>
+        /// Minidump stream'ini temsil eden struct
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct MinidumpStream
+        {
+            public uint StreamType;
+            public byte[] Data;
+        }
+
+        
+        /// <summary>
+        /// Thread CONTEXT bilgilerini tutan yardımcı struct
+        /// </summary>
+        internal struct ThreadContextInfo
+        {
+            public uint ThreadId;
+            public CONTEXT Context;
+        }
+
+        /// <summary>
+        /// Thread bilgilerini tutan detaylı struct
+        /// </summary>
+        internal struct ThreadDetailInfo
+        {
+            public uint ThreadId;
+            public CONTEXT Context;
+
+            public ThreadDetailInfo(uint threadId, CONTEXT context)
+            {
+                ThreadId = threadId;
+                Context = context;
+            }
+        }
+
+        /// <summary>
+        /// Gelişmiş thread bilgilerini tutan struct (MINIDUMP_THREAD için)
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct MinidumpThreadInfo
+        {
+            public uint ThreadId;
+            public ulong TebAddress;
+            public ulong StackBase;
+            public uint StackSize;
+            public CONTEXT Context;
+        }
+
+            /// <summary>
+    /// Sistem bilgilerini tutan struct
+    /// </summary>
+    public struct SystemInfoData
+    {
+        public uint MajorVersion;
+        public uint MinorVersion;
+        public uint BuildNumber;
+        public uint PlatformId;
+        public string CSDVersion;
+        public ushort ProcessorArchitecture;
+        public byte ProcessorCount;
+        public short ProcessorLevel;
+        public short ProcessorRevision;
+        public ushort SuiteMask;
+        public uint TotalPhysicalMemory;
+        public uint AvailablePhysicalMemory;
+        public uint TotalPageFile;
+        public uint AvailablePageFile;
+        public uint TotalVirtualMemory;
+        public uint AvailableVirtualMemory;
+        // CPU Information
+        public uint VendorId0;
+        public uint VendorId1;
+        public uint VendorId2;
+        public uint VersionInformation;
+        public uint FeatureInformation;
+        public uint AMDExtendedCpuFeatures;
+    }
+
+        /// <summary>
+        /// İşlem bilgilerini tutan struct
+        /// </summary>
+        public struct ProcessInfoData
+        {
+            public uint ProcessId;
+            public uint ParentProcessId;
+            public IntPtr CreateTime;
+            public IntPtr ExitTime;
+            public IntPtr UserTime;
+            public IntPtr KernelTime;
+            public string ImageName;
+            public string CommandLine;
+        }
+
+        /// <summary>
+        /// Handle bilgilerini tutan struct
+        /// </summary>
+        public struct HandleInfo
+        {
+            public uint HandleValue;
+            public uint GrantedAccess;
+            public byte ObjectTypeIndex;
+            public byte HandleAttributes;
+            public IntPtr ObjectPointer;
+            public string TypeName;
+            public string ObjectName;  // Object name (File path, Registry key, etc.)
+        }
+
     }
 }

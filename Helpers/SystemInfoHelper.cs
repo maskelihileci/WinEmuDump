@@ -1,18 +1,14 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using static WinEmuDump.Win32;
 
 
-namespace WinEmuDump
+namespace WinEmuDump.Helpers
 {
-    internal class SystemInfoCollector
+    internal static class SystemInfoHelper
     {
-        // SystemInfoCollector.cs - Sistem bilgilerini toplama işlevi
-        // Bu dosya sistem bilgilerini, bellek bilgilerini ve diğer sistem verilerini toplar
-
-        // Source File #3
+        // SystemInfoCollector.cs içeriği buraya taşınacak
 
         /// <summary>
         /// Sistem bilgilerini toplar
@@ -89,14 +85,14 @@ namespace WinEmuDump
 
                 // Sistem bilgilerini al
                 SYSTEM_INFO sysInfo;
-                GetSystemInfo(out sysInfo);
+                Kernel32Api.GetSystemInfo(out sysInfo);
 
                 // SuiteMask bilgisini al (OSVERSIONINFOEX kullanarak)
-                systemInfo.SuiteMask = SystemInfoCollector.GetSuiteMask();
+                systemInfo.SuiteMask = SystemInfoHelper.GetSuiteMask();
 
                 // Gerçek processor architecture'ı tespit et
                 // Hedef process'in architecture'ını kontrol et
-                systemInfo.ProcessorArchitecture = SystemInfoCollector.DetectProcessArchitecture(hProcess);
+                systemInfo.ProcessorArchitecture = SystemInfoHelper.DetectProcessArchitecture(hProcess);
                 systemInfo.ProcessorCount = (byte)sysInfo.dwNumberOfProcessors;
                 systemInfo.ProcessorLevel = sysInfo.wProcessorLevel;
                 systemInfo.ProcessorRevision = sysInfo.wProcessorRevision;
@@ -104,7 +100,7 @@ namespace WinEmuDump
                 Console.WriteLine($"[DEBUG] ProcessorArchitecture tespit edildi: {systemInfo.ProcessorArchitecture} ({(systemInfo.ProcessorArchitecture == 9 ? "x64" : systemInfo.ProcessorArchitecture == 0 ? "x86" : "Unknown")})");
 
                 // CPU bilgilerini topla
-                SystemInfoCollector.CollectCpuInfo(out systemInfo.VendorId0, out systemInfo.VendorId1, out systemInfo.VendorId2,
+                SystemInfoHelper.CollectCpuInfo(out systemInfo.VendorId0, out systemInfo.VendorId1, out systemInfo.VendorId2,
                                                    out systemInfo.VersionInformation, out systemInfo.FeatureInformation, out systemInfo.AMDExtendedCpuFeatures);
 
                 // Bellek bilgilerini al
@@ -125,7 +121,7 @@ namespace WinEmuDump
                 Console.WriteLine($"  - VersionInformation: 0x{systemInfo.VersionInformation:X}");
                 Console.WriteLine($"  - FeatureInformation: 0x{systemInfo.FeatureInformation:X}");
                 Console.WriteLine($"  - AMDExtendedCpuFeatures: 0x{systemInfo.AMDExtendedCpuFeatures:X}");
-                
+
                 Console.WriteLine($"[INFO] Sistem bilgileri toplandı: Windows {systemInfo.MajorVersion}.{systemInfo.MinorVersion} Build {systemInfo.BuildNumber}");
                 return true;
             }
@@ -156,7 +152,7 @@ namespace WinEmuDump
 
                 // Sistem 64-bit ise, process'in WOW64 altında çalışıp çalışmadığını kontrol et
                 bool isWow64;
-                if (IsWow64Process(hProcess, out isWow64))
+                if (Kernel32Api.IsWow64Process(hProcess, out isWow64))
                 {
                     if (isWow64)
                     {
@@ -190,7 +186,7 @@ namespace WinEmuDump
                 {
                     // Son fallback: Sistem bilgilerini kullan
                     SYSTEM_INFO sysInfo;
-                    GetSystemInfo(out sysInfo);
+                    Kernel32Api.GetSystemInfo(out sysInfo);
                     return (ushort)sysInfo.wProcessorArchitecture;
                 }
             }
@@ -211,7 +207,7 @@ namespace WinEmuDump
                 MEMORYSTATUSEX memStatus = new MEMORYSTATUSEX();
                 memStatus.dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
 
-                if (GlobalMemoryStatusEx(ref memStatus))
+                if (Kernel32Api.GlobalMemoryStatusEx(ref memStatus))
                 {
                     memoryInfo.TotalPhysicalMemory = (uint)(memStatus.ullTotalPhys / 1024 / 1024); // MB
                     memoryInfo.AvailablePhysicalMemory = (uint)(memStatus.ullAvailPhys / 1024 / 1024);
@@ -248,7 +244,7 @@ namespace WinEmuDump
                 OSVERSIONINFOEX versionInfo = new OSVERSIONINFOEX();
                 versionInfo.dwOSVersionInfoSize = Marshal.SizeOf(typeof(OSVERSIONINFOEX));
 
-                uint ntstatus = RtlGetVersion(ref versionInfo);
+                uint ntstatus = NativeApi.RtlGetVersion(ref versionInfo);
 
                 if (ntstatus == 0)
                 {
@@ -294,30 +290,9 @@ namespace WinEmuDump
 
             try
             {
-                // CPUID komutunu kullanarak CPU bilgilerini al
-                // Intel ve AMD CPU'lar için CPUID instruction'ı kullanılır
-                
-                // Vendor ID bilgisi için CPUID EAX=0
-                GetCpuid(0, out uint eax0, out uint ebx0, out uint ecx0, out uint edx0);
-                
-                vendorId0 = ebx0;
-                vendorId1 = edx0;
-                vendorId2 = ecx0;
-
-                // Processor Info ve Feature Bits için CPUID EAX=1
-                GetCpuid(1, out uint eax1, out uint ebx1, out uint ecx1, out uint edx1);
-                
-                versionInformation = eax1;
-                featureInformation = edx1;
-
-                // AMD Extended Features için CPUID EAX=1, ECX=0
-                GetCpuidExtended(1, 0, out uint eaxExt, out uint ebxExt, out uint ecxExt, out uint edxExt);
-                amdExtendedCpuFeatures = ecxExt;
-
-                Console.WriteLine($"[DEBUG] CPU Vendor: {GetVendorString(vendorId0, vendorId1, vendorId2)}");
-                Console.WriteLine($"[DEBUG] CPU Version: 0x{versionInformation:X}");
-                Console.WriteLine($"[DEBUG] CPU Features: 0x{featureInformation:X}");
-                Console.WriteLine($"[DEBUG] AMD Extended Features: 0x{amdExtendedCpuFeatures:X}");
+                // CPU bilgilerini CpuHelper'dan al
+                CpuHelper.GetCpuInfo(out vendorId0, out vendorId1, out vendorId2,
+                                    out versionInformation, out featureInformation, out amdExtendedCpuFeatures);
             }
             catch (Exception ex)
             {
@@ -326,188 +301,89 @@ namespace WinEmuDump
             }
         }
 
-        /// <summary>
-        /// CPUID komutunu çalıştırır (Standard CPUID)
-        /// </summary>
-        /// <param name="function">CPUID function number</param>
-        /// <param name="eax">EAX çıktısı</param>
-        /// <param name="ebx">EBX çıktısı</param>
-        /// <param name="ecx">ECX çıktısı</param>
-        /// <param name="edx">EDX çıktısı</param>
-        private static void GetCpuid(uint function, out uint eax, out uint ebx, out uint ecx, out uint edx)
-        {
-            eax = 0; ebx = 0; ecx = 0; edx = 0;
-            
-            try
-            {
-                // CPUID için unsafe kod veya inline assembly gerekir
-                // Modern .NET'te BitConverter ile CPUID simulation yapabiliriz
-                // Gerçek CPUID için CPUID instruction'ı gerekir
-                
-                // Fallback: Simulated values based on common Intel/AMD processors
-                if (function == 0)
-                {
-                    // Vendor ID için tipik değerler
-                    // Intel: "GenuineIntel" = 0x756E6547, 0x49656E69, 0x6C65746E
-                    // AMD: "AuthenticAMD" = 0x68747541, 0x69746E65, 0x444D4163
-                    ebx = 0x68747541; // "Auth" - AMD signature başlangıcı
-                    ecx = 0x6C65746E; // "lten"
-                    edx = 0x444D4163; // "DMac"
-                }
-                else if (function == 1)
-                {
-                    // Version Information - Modern x64 processor için tipik değer
-                    eax = 0x000306A0; // Stepping: 0, Model: 6, Family: 6 (Intel Core i3/i5/i7)
-                    edx = 0x0F89BA3F; // Feature flags (SSE3, PCLMUL, DTES64, MONITOR, etc.)
-                    ecx = 0x0298E3FF; // Extended features
-                }
-            }
-            catch
-            {
-                // Error durumunda tüm değerleri sıfırla
-            }
-        }
 
         /// <summary>
-        /// CPUID Extended komutunu çalıştırır
+        /// İşlem bilgilerini toplar
         /// </summary>
-        /// <param name="function">CPUID function number</param>
-        /// <param name="subfunction">CPUID subfunction number</param>
-        /// <param name="eax">EAX çıktısı</param>
-        /// <param name="ebx">EBX çıktısı</param>
-        /// <param name="ecx">ECX çıktısı</param>
-        /// <param name="edx">EDX çıktısı</param>
-        public static void GetCpuidExtended(uint function, uint subfunction, out uint eax, out uint ebx, out uint ecx, out uint edx)
+        /// <param name="hProcess">Hedef işlemin handle'ı</param>
+        /// <param name="processInfo">Toplanan işlem bilgilerini içeren çıkış parametresi</param>
+        /// <returns>Başarılı ise true, aksi halde false</returns>
+        public static bool CollectProcessInfo(IntPtr hProcess, out ProcessInfoData processInfo)
         {
-            eax = 0; ebx = 0; ecx = 0; edx = 0;
-            
-            try
-            {
-                // Extended CPUID için tipik değerler
-                if (function == 1 && subfunction == 0)
-                {
-                    ecx = 0x0298E3FF; // AMD extended features
-                }
-            }
-            catch
-            {
-                // Error durumunda tüm değerleri sıfırla
-            }
-        }
-
-        /// <summary>
-        /// Vendor ID'yi string'e çevirir
-        /// </summary>
-        /// <param name="vendorId0">Vendor ID part 1</param>
-        /// <param name="vendorId1">Vendor ID part 2</param>
-        /// <param name="vendorId2">Vendor ID part 3</param>
-        /// <returns>Vendor string</returns>
-        private static string GetVendorString(uint vendorId0, uint vendorId1, uint vendorId2)
-        {
-            try
-            {
-                byte[] vendorBytes = new byte[12];
-                BitConverter.GetBytes(vendorId0).CopyTo(vendorBytes, 0);
-                BitConverter.GetBytes(vendorId1).CopyTo(vendorBytes, 4);
-                BitConverter.GetBytes(vendorId2).CopyTo(vendorBytes, 8);
-                
-                string vendor = System.Text.Encoding.ASCII.GetString(vendorBytes);
-                
-                if (vendor.Contains("GenuineIntel"))
-                    return "Intel";
-                else if (vendor.Contains("AuthenticAMD"))
-                    return "AMD";
-                else
-                    return vendor;
-            }
-            catch
-            {
-                return "Unknown";
-            }
-        }
-
-/// <summary>
-/// İşlem bilgilerini toplar
-/// </summary>
-/// <param name="hProcess">Hedef işlemin handle'ı</param>
-/// <param name="processInfo">Toplanan işlem bilgilerini içeren çıkış parametresi</param>
-/// <returns>Başarılı ise true, aksi halde false</returns>
-public static bool CollectProcessInfo(IntPtr hProcess, out ProcessInfoData processInfo)
-{
-    processInfo = new ProcessInfoData();
-
-    try
-    {
-        int processId = GetProcessIdFromHandle(hProcess);
-        Process process = Process.GetProcessById(processId);
-
-        processInfo.ProcessId = (uint)process.Id;
-        processInfo.ParentProcessId = 0; // Process sınıfından doğrudan alınamıyor
-        processInfo.CreateTime = DateTimeToFileTime(process.StartTime);
-        processInfo.ExitTime = process.HasExited ? DateTimeToFileTime(process.ExitTime) : IntPtr.Zero;
-
-        // Gerçek işlem zamanlarını NtQueryInformationProcess ile al
-        try
-        {
-            // PROCESS_TIMES yapısı için gerekli boyutu hesapla
-            uint processTimesSize = (uint)(Marshal.SizeOf(typeof(long)) * 4); // CreateTime, ExitTime, KernelTime, UserTime
-            IntPtr processTimesPtr = Marshal.AllocHGlobal((int)processTimesSize);
+            processInfo = new ProcessInfoData();
 
             try
             {
-                uint ntstatus = NtQueryInformationProcess(hProcess, 4, processTimesPtr, processTimesSize, out uint returnLength); // ProcessTimes = 4
+                int processId = (int)Kernel32Api.GetProcessId(hProcess);
+                Process process = Process.GetProcessById(processId);
 
-                if (ntstatus == 0 && returnLength >= processTimesSize)
+                processInfo.ProcessId = (uint)process.Id;
+                processInfo.ParentProcessId = 0; // Process sınıfından doğrudan alınamıyor
+                processInfo.CreateTime = DateTimeToFileTime(process.StartTime);
+                processInfo.ExitTime = process.HasExited ? DateTimeToFileTime(process.ExitTime) : IntPtr.Zero;
+
+                // Gerçek işlem zamanlarını NtQueryInformationProcess ile al
+                try
                 {
-                    // FILETIME değerlerini oku (saniye cinsinden, 1970'den beri)
-                    long createTime = Marshal.ReadInt64(processTimesPtr, 0);
-                    long exitTime = Marshal.ReadInt64(processTimesPtr, 8);
-                    long kernelTime = Marshal.ReadInt64(processTimesPtr, 16);
-                    long userTime = Marshal.ReadInt64(processTimesPtr, 24);
+                    // PROCESS_TIMES yapısı için gerekli boyutu hesapla
+                    uint processTimesSize = (uint)(Marshal.SizeOf(typeof(long)) * 4); // CreateTime, ExitTime, KernelTime, UserTime
+                    IntPtr processTimesPtr = Marshal.AllocHGlobal((int)processTimesSize);
 
-                    // .NET DateTime'a çevir ve FILETIME'a geri çevir
-                    processInfo.UserTime = (IntPtr)userTime;
-                    processInfo.KernelTime = (IntPtr)kernelTime;
+                    try
+                    {
+                        uint ntstatus = NativeApi.NtQueryInformationProcess(hProcess, 4, processTimesPtr, processTimesSize, out uint returnLength); // ProcessTimes = 4
 
-                    Console.WriteLine($"[DEBUG] Process times - User: {userTime}, Kernel: {kernelTime}");
+                        if (ntstatus == 0 && returnLength >= processTimesSize)
+                        {
+                            // FILETIME değerlerini oku (saniye cinsinden, 1970'den beri)
+                            long createTime = Marshal.ReadInt64(processTimesPtr, 0);
+                            long exitTime = Marshal.ReadInt64(processTimesPtr, 8);
+                            long kernelTime = Marshal.ReadInt64(processTimesPtr, 16);
+                            long userTime = Marshal.ReadInt64(processTimesPtr, 24);
+
+                            // .NET DateTime'a çevir ve FILETIME'a geri çevir
+                            processInfo.UserTime = (IntPtr)userTime;
+                            processInfo.KernelTime = (IntPtr)kernelTime;
+
+                            Console.WriteLine($"[DEBUG] Process times - User: {userTime}, Kernel: {kernelTime}");
+                        }
+                        else
+                        {
+                            // Fallback: Process.TotalProcessorTime kullan
+                            TimeSpan totalProcessorTime = process.TotalProcessorTime;
+                            TimeSpan privilegedProcessorTime = process.PrivilegedProcessorTime;
+                            TimeSpan userProcessorTime = totalProcessorTime - privilegedProcessorTime;
+
+                            processInfo.UserTime = (IntPtr)(userProcessorTime.Ticks * 100);
+                            processInfo.KernelTime = (IntPtr)(privilegedProcessorTime.Ticks * 100);
+
+                            Console.WriteLine($"[DEBUG] Fallback process times - User: {processInfo.UserTime}, Kernel: {processInfo.KernelTime}");
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.FreeHGlobal(processTimesPtr);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    // Fallback: Process.TotalProcessorTime kullan
-                    TimeSpan totalProcessorTime = process.TotalProcessorTime;
-                    TimeSpan privilegedProcessorTime = process.PrivilegedProcessorTime;
-                    TimeSpan userProcessorTime = totalProcessorTime - privilegedProcessorTime;
-
-                    processInfo.UserTime = (IntPtr)(userProcessorTime.Ticks * 100);
-                    processInfo.KernelTime = (IntPtr)(privilegedProcessorTime.Ticks * 100);
-
-                    Console.WriteLine($"[DEBUG] Fallback process times - User: {processInfo.UserTime}, Kernel: {processInfo.KernelTime}");
+                    Console.WriteLine($"[WARNING] Process times alınamadı: {ex.Message}");
+                    processInfo.UserTime = IntPtr.Zero;
+                    processInfo.KernelTime = IntPtr.Zero;
                 }
+
+                processInfo.ImageName = process.ProcessName;
+                processInfo.CommandLine = GetCommandLine(process);
+
+                Console.WriteLine($"[INFO] İşlem bilgileri toplandı: {processInfo.ImageName} (PID: {processInfo.ProcessId})");
+                return true;
             }
-            finally
+            catch (Exception ex)
             {
-                Marshal.FreeHGlobal(processTimesPtr);
+                Console.WriteLine($"[ERROR] İşlem bilgileri toplanamadı: {ex.Message}");
+                return false;
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[WARNING] Process times alınamadı: {ex.Message}");
-            processInfo.UserTime = IntPtr.Zero;
-            processInfo.KernelTime = IntPtr.Zero;
-        }
-
-        processInfo.ImageName = process.ProcessName;
-        processInfo.CommandLine = GetCommandLine(process);
-
-        Console.WriteLine($"[INFO] İşlem bilgileri toplandı: {processInfo.ImageName} (PID: {processInfo.ProcessId})");
-        return true;
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[ERROR] İşlem bilgileri toplanamadı: {ex.Message}");
-        return false;
-    }
-}
         /// <summary>
         /// İşlemin komut satırını alır
         /// </summary>
@@ -542,110 +418,5 @@ public static bool CollectProcessInfo(IntPtr hProcess, out ProcessInfoData proce
                 return IntPtr.Zero;
             }
         }
-
-        /// <summary>
-        /// Process handle'ından process ID'sini çıkarır
-        /// </summary>
-        /// <param name="hProcess">Process handle'ı</param>
-        /// <returns>Process ID</returns>
-        private static int GetProcessIdFromHandle(IntPtr hProcess)
-        {
-            try
-            {
-                // Kernel32.dll'deki GetProcessId fonksiyonunu kullan
-                IntPtr kernel32 = LoadLibrary("kernel32.dll");
-                IntPtr getProcessId = GetProcAddress(kernel32, "GetProcessId");
-
-                if (getProcessId != IntPtr.Zero)
-                {
-                    GetProcessIdDelegate getPid = Marshal.GetDelegateForFunctionPointer<GetProcessIdDelegate>(getProcessId);
-                    return (int)getPid(hProcess);
-                }
-            }
-            catch
-            {
-                // Fallback: Mevcut process ise kendi ID'mizi döndür
-                return Process.GetCurrentProcess().Id;
-            }
-
-            return 0;
-        }
-
-        // P/Invoke tanımlamaları
-        [DllImport("ntdll.dll", SetLastError = true)]
-        private static extern uint RtlGetVersion(ref OSVERSIONINFOEX lpVersionInformation);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
-
-        [DllImport("kernel32.dll")]
-        private static extern IntPtr LoadLibrary(string dllName);
-
-        [DllImport("kernel32.dll")]
-        private static extern IntPtr GetProcAddress(IntPtr hModule, string procedureName);
-
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate uint GetProcessIdDelegate(IntPtr hProcess);
-
-        // Ek struct tanımlamaları
-        [StructLayout(LayoutKind.Sequential)]
-        private struct MEMORYSTATUSEX
-        {
-            public uint dwLength;
-            public uint dwMemoryLoad;
-            public ulong ullTotalPhys;
-            public ulong ullAvailPhys;
-            public ulong ullTotalPageFile;
-            public ulong ullAvailPageFile;
-            public ulong ullTotalVirtual;
-            public ulong ullAvailVirtual;
-            public ulong ullAvailExtendedVirtual;
-        }
-    }
-
-    /// <summary>
-    /// Sistem bilgilerini tutan struct
-    /// </summary>
-    public struct SystemInfoData
-    {
-        public uint MajorVersion;
-        public uint MinorVersion;
-        public uint BuildNumber;
-        public uint PlatformId;
-        public string CSDVersion;
-        public ushort ProcessorArchitecture;
-        public byte ProcessorCount;
-        public short ProcessorLevel;
-        public short ProcessorRevision;
-        public ushort SuiteMask;
-        public uint TotalPhysicalMemory;
-        public uint AvailablePhysicalMemory;
-        public uint TotalPageFile;
-        public uint AvailablePageFile;
-        public uint TotalVirtualMemory;
-        public uint AvailableVirtualMemory;
-        // CPU Information
-        public uint VendorId0;
-        public uint VendorId1;
-        public uint VendorId2;
-        public uint VersionInformation;
-        public uint FeatureInformation;
-        public uint AMDExtendedCpuFeatures;
-    }
-
-    /// <summary>
-    /// İşlem bilgilerini tutan struct
-    /// </summary>
-    public struct ProcessInfoData
-    {
-        public uint ProcessId;
-        public uint ParentProcessId;
-        public IntPtr CreateTime;
-        public IntPtr ExitTime;
-        public IntPtr UserTime;
-        public IntPtr KernelTime;
-        public string ImageName;
-        public string CommandLine;
     }
 }

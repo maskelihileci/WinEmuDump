@@ -3,11 +3,9 @@ using System.Diagnostics;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using static WinEmuDump.Win32;
-using static WinEmuDump.CreateFile;
-using static WinEmuDump.ThreadCollector;
-using static WinEmuDump.HandleCollector;
-using static WinEmuDump.SystemInfoCollector;
-using static WinEmuDump.MinidumpBuilder;
+using static WinEmuDump.NativeApi;
+using WinEmuDump.Helpers;
+
 
 namespace WinEmuDump
 {
@@ -50,35 +48,6 @@ namespace WinEmuDump
         }
 
 
-        public static IntPtr ReadRemoteIntPtr(IntPtr hProcess, IntPtr mem_address)
-        {
-            byte[] buff = new byte[8];
-            uint ntstatus = NtReadVirtualMemory(hProcess, mem_address, buff, buff.Length, out _);
-            if (ntstatus != 0)
-            {
-                Console.WriteLine("[-] Error calling NtReadVirtualMemory. NTSTATUS: 0x" + ntstatus.ToString("X"));
-            }
-            long value = BitConverter.ToInt64(buff, 0);
-            return (IntPtr)value;
-        }
-
-
-        public static string ReadRemoteWStr(IntPtr hProcess, IntPtr mem_address)
-        {
-            byte[] buff = new byte[256];
-            uint ntstatus = NtReadVirtualMemory(hProcess, mem_address, buff, buff.Length, out _);
-            if (ntstatus != 0)
-            {
-                Console.WriteLine("[-] Error calling NtReadVirtualMemory. NTSTATUS: 0x" + ntstatus.ToString("X"));
-            }
-            string unicode_str = "";
-            for (int i = 0; i < buff.Length - 1; i += 2)
-            {
-                if (buff[i] == 0 && buff[i + 1] == 0) { break; }
-                unicode_str += BitConverter.ToChar(buff, i);
-            }
-            return unicode_str;
-        }
 
 
         public unsafe static IntPtr CustomGetModuleHandle(IntPtr hProcess, String dll_name)
@@ -125,7 +94,7 @@ namespace WinEmuDump
 
             // Get Ldr 
             IntPtr ldr_pointer = pebaddress + ldr_offset;
-            IntPtr ldr_adress = ReadRemoteIntPtr(hProcess, ldr_pointer);
+            IntPtr ldr_adress = MemoryHelper.ReadRemoteIntPtr(hProcess, ldr_pointer);
             if (ldr_adress == IntPtr.Zero) {
                 Console.WriteLine("[-] PEB structure is not readable.");
                 Environment.Exit(0);
@@ -133,19 +102,19 @@ namespace WinEmuDump
             
             IntPtr InInitializationOrderModuleList = ldr_adress + inInitializationOrderModuleList_offset;
             Console.WriteLine("[+] InInitializationOrderModuleList:\t\t0x" + InInitializationOrderModuleList.ToString("X"));
-            IntPtr next_flink = ReadRemoteIntPtr(hProcess, InInitializationOrderModuleList);
+            IntPtr next_flink = MemoryHelper.ReadRemoteIntPtr(hProcess, InInitializationOrderModuleList);
 
             IntPtr dll_base = (IntPtr)1337;
             while (dll_base != IntPtr.Zero)
             {
                 next_flink = next_flink - 0x10;
                 // Get DLL base address
-                dll_base = ReadRemoteIntPtr(hProcess, (next_flink + flink_dllbase_offset));
-                IntPtr buffer = ReadRemoteIntPtr(hProcess, (next_flink + flink_buffer_offset));
+                dll_base = MemoryHelper.ReadRemoteIntPtr(hProcess, (next_flink + flink_dllbase_offset));
+                IntPtr buffer = MemoryHelper.ReadRemoteIntPtr(hProcess, (next_flink + flink_buffer_offset));
 
-                string base_dll_name = ReadRemoteWStr(hProcess, buffer);
+                string base_dll_name = MemoryHelper.ReadRemoteUnicodeString(hProcess, buffer);
 
-                next_flink = ReadRemoteIntPtr(hProcess, (next_flink + 0x10));
+                next_flink = MemoryHelper.ReadRemoteIntPtr(hProcess, (next_flink + 0x10));
                 
                 // Compare with DLL name we are searching
                 if (dll_name.ToLower() == base_dll_name.ToLower())
@@ -213,7 +182,7 @@ namespace WinEmuDump
                 // Sistem bilgilerini topla
                 Console.WriteLine("[INFO] Sistem bilgileri toplanıyor...");
                 SystemInfoData systemInfo;
-                if (!CollectSystemInfo(processHandle, out systemInfo))
+                if (!SystemInfoHelper.CollectSystemInfo(processHandle, out systemInfo))
                 {
                     Console.WriteLine("[WARNING] Sistem bilgileri toplanamadı, devam ediliyor...");
                 }
@@ -221,7 +190,7 @@ namespace WinEmuDump
                 // İşlem bilgilerini topla
                 Console.WriteLine("[INFO] İşlem bilgileri toplanıyor...");
                 ProcessInfoData processInfo;
-                if (!CollectProcessInfo(processHandle, out processInfo))
+                if (!SystemInfoHelper.CollectProcessInfo(processHandle, out processInfo))
                 {
                     Console.WriteLine("[WARNING] İşlem bilgileri toplanamadı");
                     processInfo = new ProcessInfoData { ProcessId = (uint)processPID, ImageName = targetProcess };
@@ -230,12 +199,12 @@ namespace WinEmuDump
                 // Thread bilgilerini topla
                 Console.WriteLine("[INFO] Thread bilgileri toplanıyor...");
                 List<MinidumpThreadInfo> threadList = new List<MinidumpThreadInfo>();
-                if (!ThreadCollector.CollectAdvancedThreadInformation(processHandle, out threadList))
+                if (!MinidumpBuilder.CollectAdvancedThreadInformation(processHandle, out threadList))
                 {
                     Console.WriteLine("[WARNING] Thread bilgileri toplanamadı - eski yöntem kullanılıyor");
                     // Fallback: Eski thread toplama yöntemini kullan
                     List<ThreadInfo> oldThreadList = new List<ThreadInfo>();
-                    if (ThreadCollector.CollectThreadInformation(processHandle, out oldThreadList))
+                    if (ThreadHelper.CollectThreadInformation(processHandle, out oldThreadList))
                     {
                         Console.WriteLine($"[INFO] Eski yöntemle {oldThreadList.Count} thread bulundu");
                         // Eski ThreadInfo'yu MinidumpThreadInfo'ya çevir (şimdilik TEB=0, Stack=0 ile)
@@ -260,7 +229,7 @@ namespace WinEmuDump
                 // Handle bilgilerini topla
                 Console.WriteLine("[INFO] Sistem handle'ları toplanıyor...");
                 List<HandleInfo> handleList = new List<HandleInfo>();
-                if (!CollectSystemHandles(processHandle, out handleList))
+                if (!HandleHelper.CollectSystemHandles(processHandle, out handleList))
                 {
                     Console.WriteLine("[WARNING] Handle bilgileri toplanamadı");
                 }
@@ -278,7 +247,7 @@ namespace WinEmuDump
 
                 // Gelişmiş minidump oluştur
                 Console.WriteLine("[INFO] Gelişmiş minidump oluşturuluyor...");
-                if (BuildAdvancedMinidump(processHandle, processInfo, threadList, handleList, moduleList, systemInfo, dumpfile))
+                if (MinidumpBuilder.BuildAdvancedMinidump(processHandle, processInfo, threadList, handleList, moduleList, systemInfo, dumpfile))
                 {
                     Console.WriteLine($"[SUCCESS] Gelişmiş minidump başarıyla oluşturuldu: {dumpfile}");
                     Console.WriteLine("[INFO] İçerik:");
@@ -407,7 +376,7 @@ namespace WinEmuDump
             try
             {
                 // Ana modülü al
-                Process process = Process.GetProcessById(GetProcessIdFromHandle(hProcess));
+                Process process = Process.GetProcessById((int)Kernel32Api.GetProcessId(hProcess));
                 IntPtr baseAddress = process.MainModule.BaseAddress;
                 int moduleSize = process.MainModule.ModuleMemorySize;
 
@@ -450,35 +419,7 @@ namespace WinEmuDump
             return moduleList;
         }
 
-        /// <summary>
-        /// Process handle'ından process ID'sini çıkarır
-        /// </summary>
-        private static int GetProcessIdFromHandle(IntPtr hProcess)
-        {
-            try
-            {
-                IntPtr kernel32 = LoadLibrary("kernel32.dll");
-                IntPtr getProcessId = GetProcAddress(kernel32, "GetProcessId");
-
-                if (getProcessId != IntPtr.Zero)
-                {
-                    GetProcessIdDelegate getPid = Marshal.GetDelegateForFunctionPointer<GetProcessIdDelegate>(getProcessId);
-                    return (int)getPid(hProcess);
-                }
-            }
-            catch
-            {
-                return Process.GetCurrentProcess().Id;
-            }
-
-            return 0;
-        }
-
-        [DllImport("kernel32.dll")]
-        private static extern IntPtr LoadLibrary(string dllName);
-
-        [DllImport("kernel32.dll")]
-        private static extern IntPtr GetProcAddress(IntPtr hModule, string procedureName);
+        // GetProcessIdFromHandle, LoadLibrary, GetProcAddress fonksiyonları Api/Kernel32Api.cs'e taşındı
 
         /// <summary>
         /// Oluşturulan dump dosyasının temel doğrulamasını yapar
@@ -541,7 +482,6 @@ namespace WinEmuDump
             }
         }
 
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate uint GetProcessIdDelegate(IntPtr hProcess);
+        // GetProcessIdDelegate fonksiyonu artık kullanılmıyor - Api/Kernel32Api.cs'teki GetProcessId kullanılıyor
     }
 }
