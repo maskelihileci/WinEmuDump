@@ -9,13 +9,6 @@ namespace WinEmuDump
     /// </summary>
     internal class PsApi
     {
-        [DllImport("psapi.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool GetProcessMemoryInfo(IntPtr hProcess, out Win32.PROCESS_MEMORY_COUNTERS ppsmemCounters, uint cb);
-
-        [DllImport("psapi.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool GetProcessMemoryInfo(IntPtr hProcess, out Win32.PROCESS_MEMORY_COUNTERS_EX ppsmemCounters, uint cb);
 
         [DllImport("psapi.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]

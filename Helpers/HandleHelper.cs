@@ -1,7 +1,42 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using static WinEmuDump.Win32;
+
+/// <summary>
+/// Handle bilgilerini tutan struct
+/// </summary>
+public struct HandleInfo
+{
+    public uint HandleValue;
+    public uint GrantedAccess;
+    public byte ObjectTypeIndex;
+    public byte HandleAttributes;
+    public IntPtr ObjectPointer;
+    public string TypeName;
+    public string ObjectName;  // Object name (File path, Registry key, etc.)
+}
+
+///////////////// EXTENDED STRUCTS FOR ADVANCED MINIDUMP /////////////////
+
+[StructLayout(LayoutKind.Sequential)]
+public struct SYSTEM_HANDLE_TABLE_ENTRY_INFO
+{
+    public ushort UniqueProcessId;
+    public ushort CreatorBackTraceIndex;
+    public byte ObjectTypeIndex;
+    public byte HandleAttributes;
+    public ushort HandleValue;
+    public IntPtr Object;
+    public uint GrantedAccess;
+    public ushort CreatorBackTraceIndex2; // Windows 7+ için ek alan
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct SYSTEM_HANDLE_INFORMATION
+{
+    public uint NumberOfHandles;
+    public SYSTEM_HANDLE_TABLE_ENTRY_INFO Handles;
+}
 
 namespace WinEmuDump.Helpers
 {
@@ -46,6 +81,7 @@ namespace WinEmuDump.Helpers
                     }
 
                     uint returnLength;
+                    uint SystemHandleInformation = 16;
                     uint ntStatus = NativeApi.NtQuerySystemInformation(SystemHandleInformation, buffer, bufferSize, out returnLength);
 
                     if (ntStatus == 0xC0000004) // STATUS_INFO_LENGTH_MISMATCH

@@ -1,7 +1,21 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using static WinEmuDump.Win32;
+
+/// <summary>
+/// PROCESS_BASIC_INFORMATION yapısı - Process bilgileri için
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct PROCESS_BASIC_INFORMATION
+{
+    public IntPtr Reserved1;
+    public IntPtr PebBaseAddress;
+    public IntPtr Reserved2;
+    public IntPtr Reserved3;
+    public IntPtr UniqueProcessId;
+    public IntPtr Reserved4;
+}
+
 
 namespace WinEmuDump.Helpers
 {
@@ -61,12 +75,12 @@ namespace WinEmuDump.Helpers
             {
                 // PROCESS_BASIC_INFORMATION boyutunu tahmin et (64-bit vs 32-bit)
                 int pbiSize = Environment.Is64BitProcess ? 48 : 24;
-                
+
                 IntPtr pbiPtr = Marshal.AllocHGlobal(pbiSize);
                 try
                 {
                     uint ntStatus = NativeApi.NtQueryInformationProcess(hProcess, 0, pbiPtr, (uint)pbiSize, out uint returnLength);
-                    
+
                     if (ntStatus == 0 && returnLength >= (uint)Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)))
                     {
                         // PROCESS_BASIC_INFORMATION'dan UniqueProcessId'yi oku
@@ -76,9 +90,9 @@ namespace WinEmuDump.Helpers
                         // Offset 12/24: BasePriority (4/8 bytes)
                         // Offset 16/32: UniqueProcessId (4/8 bytes)
                         // Offset 20/40: InheritedFromUniqueProcessId (4/8 bytes)
-                        
+
                         int processIdOffset = Environment.Is64BitProcess ? 32 : 16;
-                        return Environment.Is64BitProcess 
+                        return Environment.Is64BitProcess
                             ? Marshal.ReadInt32(pbiPtr, processIdOffset)
                             : Marshal.ReadInt32(pbiPtr, processIdOffset);
                     }
@@ -92,7 +106,7 @@ namespace WinEmuDump.Helpers
             {
                 // NtQueryInformationProcess başarısız oldu
             }
-            
+
             throw new InvalidOperationException("Process ID alınamadı");
         }
 

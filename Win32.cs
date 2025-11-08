@@ -6,11 +6,6 @@ namespace WinEmuDump
 {
     internal class Win32
     {
-        ///////////////// WINDOWS CONSTANTS /////////////////
-        public const uint TIME_ZONE_ID_UNKNOWN = 0;
-        public const uint TIME_ZONE_ID_STANDARD = 1;
-        public const uint TIME_ZONE_ID_DAYLIGHT = 2;
-        public const int MAX_PATH = 260;
 
 /// <summary>
         /// Include just the information necessary to capture stack traces for all existing threads in a process.
@@ -140,20 +135,9 @@ namespace WinEmuDump
         ///////////////// CONSTANTS /////////////////
         public const int MEM_COMMIT = 0x00001000;
         public const int PAGE_NOACCESS = 0x01;
-        public const uint PROCESS_QUERY_INFORMATION = 0x0400;
-        public const uint PROCESS_VM_READ = 0x0010;
-        public const uint PROCESS_DUP_HANDLE = 0x0040;
-        public const uint PROCESS_VM_OPERATION = 0x0008;
         public const uint MemoryBasicInformation = 0;
-        public const uint TOKEN_ADJUST_PRIVILEGES = 0x00000020;
-        public const uint TOKEN_QUERY = 0x00000008;
         public const uint THREAD_QUERY_INFORMATION = 0x0040;
         public const uint THREAD_GET_CONTEXT = 0x0008;
-        public const uint SystemHandleInformation = 16;
-        public const uint SystemProcessInformation = 5;
-        public const uint SystemMemoryInformation = 0x0035;
-        public const uint SystemInformationClass = 0x00B5;
-        public const uint SystemObjectTypesInformation = 0x00B6; // OBJECT_TYPES_INFORMATION için
 
         // Minidump Stream Type Constants
         public const uint MINIDUMP_STREAM_TYPE_ThreadList = 3;
@@ -179,61 +163,6 @@ namespace WinEmuDump
         public const uint MINIDUMP_STREAM_TYPE_IptTrace = 23;
         public const uint MINIDUMP_STREAM_TYPE_ThreadNames = 24;
 
-
-
-        ///////////////// FUNCTIONS /////////////////
-        // DllImport functions have been moved to separate files:
-        // - NativeApi.cs (NT DLL functions)
-        // - Kernel32Api.cs (Kernel32 DLL functions)
-        // - PsApi.cs (PSAPI DLL functions)
-        
-        // THREADINFOCLASS enum (sadece ihtiyacımız olan)
-        public const uint ThreadBasicInformation = 0;
-        public const uint ThreadStackInformation = 5;
-        public const uint ThreadNameInformation = 0x24;
-
-        /// <summary>
-        /// THREAD_BASIC_INFORMATION yapısı - Thread temel bilgileri için
-        /// </summary>
-        [StructLayout(LayoutKind.Sequential)]
-        public struct THREAD_BASIC_INFORMATION
-        {
-            public uint ExitStatus;
-            public IntPtr TebBaseAddress;
-            public CLIENT_ID ClientId;
-            public IntPtr AffinityMask;
-            public uint Priority;
-            public uint BasePriority;
-        }
-
-        /// <summary>
-        /// THREAD_STACK_INFORMATION yapısı - Thread stack bilgileri için
-        /// </summary>
-        [StructLayout(LayoutKind.Sequential)]
-        public struct THREAD_STACK_INFORMATION
-        {
-            public IntPtr StackBase;
-            public IntPtr StackLimit;
-            public IntPtr StackCommit;
-            public IntPtr StackCommitMax;
-            public IntPtr StackReserved;
-        }
-
-        ///////////////// MEMORY STATUS STRUCTS /////////////////
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct MEMORYSTATUSEX
-        {
-            public uint dwLength;
-            public uint dwMemoryLoad;
-            public ulong ullTotalPhys;
-            public ulong ullAvailPhys;
-            public ulong ullTotalPageFile;
-            public ulong ullAvailPageFile;
-            public ulong ullTotalVirtual;
-            public ulong ullAvailVirtual;
-            public ulong sullAvailExtendedVirtual;
-        }
 
         // DllImport functions have been moved to separate files:
         // - NativeApi.cs (NT DLL functions)
@@ -270,24 +199,6 @@ namespace WinEmuDump
             public short Milliseconds;
         }
 
-        
-        ///////////////// STRUCTS /////////////////
-        [StructLayout(LayoutKind.Sequential)]
-        public struct LUID
-        {
-            public uint LowPart;
-            public int HighPart;
-        }
-
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct TOKEN_PRIVILEGES
-        {
-            public uint PrivilegeCount;
-            public LUID Luid;
-            public uint Attributes;
-        }
-
 
         [StructLayout(LayoutKind.Sequential)]
         public struct MEMORY_BASIC_INFORMATION
@@ -300,60 +211,6 @@ namespace WinEmuDump
             public int Protect;
             public int Type;
         }
-
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct CLIENT_ID
-        {
-            public IntPtr UniqueProcess;
-            public IntPtr UniqueThread;
-        }
-
-        /// <summary>
-        /// PROCESS_BASIC_INFORMATION yapısı - Process bilgileri için
-        /// </summary>
-        [StructLayout(LayoutKind.Sequential)]
-        public struct PROCESS_BASIC_INFORMATION
-        {
-            public IntPtr Reserved1;
-            public IntPtr PebBaseAddress;
-            public IntPtr Reserved2;
-            public IntPtr Reserved3;
-            public IntPtr UniqueProcessId;
-            public IntPtr Reserved4;
-        }
-
-
-        [StructLayout(LayoutKind.Sequential, Pack = 0)]
-        public struct OBJECT_ATTRIBUTES
-        {
-            public int Length;
-            public IntPtr RootDirectory;
-            public IntPtr ObjectName;
-            public uint Attributes;
-            public IntPtr SecurityDescriptor;
-            public IntPtr SecurityQualityOfService;
-        }
-
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct OSVERSIONINFOEX
-        {
-            public int dwOSVersionInfoSize;
-            public int dwMajorVersion;
-            public int dwMinorVersion;
-            public int dwBuildNumber;
-            public int dwPlatformId;
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
-            public string szCSDVersion;
-            public short wServicePackMajor;
-            public short wServicePackMinor;
-            public short wSuiteMask;
-            public byte wProductType;
-            public byte wReserved;
-        }
-
-
 
         ////////////// STRUCTS - Minidump file //////////
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
@@ -374,14 +231,6 @@ namespace WinEmuDump
             public uint StreamType;
             public uint Size;
             public uint Location;
-        }
-
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 2)]
-        public struct CUSTOM_UNICODE_STRING
-        {
-            public uint Length;
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 31)]
-            public string Buffer;
         }
 
         // MINIDUMP_SYSTEM_INFO - Doğru yapı (DbgHelp uyumlu)
@@ -428,47 +277,6 @@ namespace WinEmuDump
             public ulong ProcessorFeatures1;
         }
 
-        // SystemInfoStream - Geçici veri toplama yapısı (eski uyumluluk için)
-        [StructLayout(LayoutKind.Sequential)]
-        public struct SystemInfoStream
-        {
-            public ushort ProcessorArchitecture;
-            public ushort ProcessorLevel;
-            public ushort ProcessorRevision;
-            public byte NumberOfProcessors;
-            public byte ProductType;
-            public uint MajorVersion;
-            public uint MinorVersion;
-            public uint BuildNumber;
-            public uint PlatformId;
-            public uint CSDVersionRva;
-            public ushort SuiteMask;
-            public ushort Reserved2;
-            public ulong ProcessorFeatures0;
-            public ulong ProcessorFeatures1;
-        }
-
-        [StructLayout(LayoutKind.Sequential, Pack = 2)]
-        public struct ModuleListStream
-        {
-            public uint NumberOfModules;
-            public IntPtr BaseAddress;
-            public uint Size;
-            public uint UnknownField1;
-            public uint Timestamp;
-            public uint PointerName;
-            public IntPtr UnknownField2;
-            public IntPtr UnknownField3;
-            public IntPtr UnknownField4;
-            public IntPtr UnknownField5;
-            public IntPtr UnknownField6;
-            public IntPtr UnknownField7;
-            public IntPtr UnknownField8;
-            public IntPtr UnknownField9;
-            public IntPtr UnknownField10;
-            public IntPtr UnknownField11;
-        }
-
         // MINIDUMP_MEMORY_DESCRIPTOR64 - Correct structure for Memory64List
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
         public struct MINIDUMP_MEMORY_DESCRIPTOR64
@@ -485,14 +293,6 @@ namespace WinEmuDump
             public MINIDUMP_LOCATION_DESCRIPTOR Memory;
         }
 
-        // Memory64ListStream - Backward compatibility structure
-        [StructLayout(LayoutKind.Sequential)]
-        public struct Memory64ListStream
-        {
-            public ulong NumberOfEntries;
-            public uint MemoryRegionsBaseAddress;
-        }
-
         // MINIDUMP_MEMORY64_LIST - Correct structure for Memory64List stream
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
         public struct MINIDUMP_MEMORY64_LIST
@@ -501,110 +301,12 @@ namespace WinEmuDump
             public UInt64 BaseRva;
         }
 
-        ///////////////// EXTENDED STRUCTS FOR ADVANCED MINIDUMP /////////////////
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct SYSTEM_HANDLE_TABLE_ENTRY_INFO
-        {
-            public ushort UniqueProcessId;
-            public ushort CreatorBackTraceIndex;
-            public byte ObjectTypeIndex;
-            public byte HandleAttributes;
-            public ushort HandleValue;
-            public IntPtr Object;
-            public uint GrantedAccess;
-            public ushort CreatorBackTraceIndex2; // Windows 7+ için ek alan
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct SYSTEM_HANDLE_INFORMATION
-        {
-            public uint NumberOfHandles;
-            public SYSTEM_HANDLE_TABLE_ENTRY_INFO Handles;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct SYSTEM_PROCESS_INFORMATION
-        {
-            public uint NextEntryOffset;
-            public uint NumberOfThreads;
-            public long WorkingSetPrivateSize;
-            public uint HardFaultCount;
-            public uint NumberOfThreadsHighWatermark;
-            public ulong CycleTime;
-            public long CreateTime;
-            public long UserTime;
-            public long KernelTime;
-            public UNICODE_STRING ImageName;
-            public int BasePriority;
-            public IntPtr UniqueProcessId;
-            public IntPtr InheritedFromUniqueProcessId;
-            public uint HandleCount;
-            public uint SessionId;
-            public IntPtr UniqueProcessKey;
-            public IntPtr PeakVirtualSize;
-            public IntPtr VirtualSize;
-            public uint PageFaultCount;
-            public IntPtr PeakWorkingSetSize;
-            public IntPtr WorkingSetSize;
-            public IntPtr QuotaPeakPagedPoolUsage;
-            public IntPtr QuotaPagedPoolUsage;
-            public IntPtr QuotaPeakNonPagedPoolUsage;
-            public IntPtr QuotaNonPagedPoolUsage;
-            public IntPtr PagefileUsage;
-            public IntPtr PeakPagefileUsage;
-            public IntPtr PrivatePageCount;
-            public long ReadOperationCount;
-            public long WriteOperationCount;
-            public long OtherOperationCount;
-            public long ReadTransferCount;
-            public long WriteTransferCount;
-            public long OtherTransferCount;
-        }
-
         [StructLayout(LayoutKind.Sequential)]
         public struct UNICODE_STRING
         {
             public ushort Length;
             public ushort MaximumLength;
             public IntPtr Buffer;
-        }
-
-        // OBJECT_TYPES_INFORMATION - Object type'larını listeler
-        [StructLayout(LayoutKind.Sequential)]
-        public struct OBJECT_TYPES_INFORMATION
-        {
-            public uint NumberOfTypes;
-            // OBJECT_TYPE_INFORMATION structs takip eder (variable length)
-        }
-
-        // OBJECT_TYPE_INFORMATION - Tek bir object type bilgisi (SystemObjectTypesInformation için)
-        [StructLayout(LayoutKind.Sequential)]
-        public struct OBJECT_TYPE_INFORMATION
-        {
-            public UNICODE_STRING TypeName;
-            public uint TotalNumberOfObjects;
-            public uint TotalNumberOfHandles;
-            public uint HighWaterNumberOfObjects;
-            public uint HighWaterNumberOfHandles;
-            public uint InvalidAttributes;
-            public GENERIC_MAPPING GenericMapping;
-            public uint ValidAccessMask;
-            public uint SecurityRequired;
-            public uint MaintainHandleCount;
-            public uint PoolType;
-            public uint PagedPoolUsage;
-            public uint NonPagedPoolUsage;
-        }
-
-        // GENERIC_MAPPING - Generic access mapping
-        [StructLayout(LayoutKind.Sequential)]
-        public struct GENERIC_MAPPING
-        {
-            public uint GenericRead;
-            public uint GenericWrite;
-            public uint GenericExecute;
-            public uint GenericAll;
         }
 
         // CONTEXT yapı sabitleri
@@ -616,224 +318,7 @@ namespace WinEmuDump
         public const uint CONTEXT_DEBUG_REGISTERS = (CONTEXT_AMD64 | 0x10);
         public const uint CONTEXT_FULL = (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT);
 
-        [StructLayout(LayoutKind.Sequential, Pack = 16)]
-        public struct CONTEXT
-        {
-            //
-            // Register parameter home addresses.
-            //
-            // N.B. These fields are for convience - they could be used to extend the
-            //      context record in the future.
-            //
-
-            public ulong P1Home;
-            public ulong P2Home;
-            public ulong P3Home;
-            public ulong P4Home;
-            public ulong P5Home;
-            public ulong P6Home;
-
-            //
-            // Control flags.
-            //
-
-            public uint ContextFlags;
-            public uint MxCsr;
-
-            //
-            // Segment Registers and processor flags.
-            //
-
-            public ushort SegCs;
-            public ushort SegDs;
-            public ushort SegEs;
-            public ushort SegFs;
-            public ushort SegGs;
-            public ushort SegSs;
-            public uint EFlags;
-
-            //
-            // Debug registers
-            //
-
-            public ulong Dr0;
-            public ulong Dr1;
-            public ulong Dr2;
-            public ulong Dr3;
-            public ulong Dr6;
-            public ulong Dr7;
-
-            //
-            // Integer registers.
-            //
-
-            public ulong Rax;
-            public ulong Rcx;
-            public ulong Rdx;
-            public ulong Rbx;
-            public ulong Rsp;
-            public ulong Rbp;
-            public ulong Rsi;
-            public ulong Rdi;
-            public ulong R8;
-            public ulong R9;
-            public ulong R10;
-            public ulong R11;
-            public ulong R12;
-            public ulong R13;
-            public ulong R14;
-            public ulong R15;
-
-            //
-            // Program counter.
-            //
-
-            public ulong Rip;
-
-            //
-            // Floating point state.
-            //
-
-            public XSAVE_FORMAT FltSave;
-
-            //
-            // Vector registers.
-            //
-
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 26)]
-            public M128A[] VectorRegister;
-            public ulong VectorControl;
-            public ulong DebugControl;
-            public ulong LastBranchToRip;
-            public ulong LastBranchFromRip;
-            public ulong LastExceptionToRip;
-            public ulong LastExceptionFromRip;
-        }
-
-        // x64 specific structures
-        [StructLayout(LayoutKind.Sequential)]
-        public struct M128A
-        {
-            public ulong Low;
-            public long High;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct XSAVE_FORMAT
-        {
-            public ushort ControlWord;
-            public ushort StatusWord;
-            public byte TagWord;
-            public byte Reserved1;
-            public ushort ErrorOpcode;
-            public uint ErrorOffset;
-            public uint ErrorSelector;
-            public uint DataOffset;
-            public uint DataSelector;
-            public uint MXCsr;
-            public uint MXCsr_Mask;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
-            public M128A[] FloatRegisters;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
-            public M128A[] XmmRegisters;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 96)]
-            public byte[] Reserved4;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct FLOATING_SAVE_AREA
-        {
-            public uint ControlWord;
-            public uint StatusWord;
-            public uint TagWord;
-            public uint ErrorOffset;
-            public uint ErrorSelector;
-            public uint DataOffset;
-            public uint DataSelector;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 80)]
-            public byte[] RegisterArea;
-            public uint Cr0NpxState;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct SYSTEM_INFO
-        {
-            public uint dwOemId;
-            public uint dwPageSize;
-            public IntPtr lpMinimumApplicationAddress;
-            public IntPtr lpMaximumApplicationAddress;
-            public IntPtr dwActiveProcessorMask;
-            public uint dwNumberOfProcessors;
-            public uint dwProcessorType;
-            public uint dwAllocationGranularity;
-            public short wProcessorLevel;
-            public short wProcessorRevision;
-            public ushort wProcessorArchitecture;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct SYSTEM_MEMORY_INFO
-        {
-            public uint TotalPhysicalMemory;
-            public uint AvailablePhysicalMemory;
-            public uint TotalPageFile;
-            public uint AvailablePageFile;
-            public uint TotalVirtual;
-            public uint AvailableVirtual;
-        }
-
-        // PROCESS_MEMORY_COUNTERS - Basic process memory counters (40 bytes)
-        [StructLayout(LayoutKind.Sequential)]
-        public struct PROCESS_MEMORY_COUNTERS
-        {
-            public uint cb;
-            public uint PageFaultCount;
-            public uint PeakWorkingSetSize;
-            public uint WorkingSetSize;
-            public uint QuotaPeakPagedPoolUsage;
-            public uint QuotaPagedPoolUsage;
-            public uint QuotaPeakNonPagedPoolUsage;
-            public uint QuotaNonPagedPoolUsage;
-            public uint PagefileUsage;
-            public uint PeakPagefileUsage;
-        }
-
-        // PROCESS_MEMORY_COUNTERS_EX - Extended process memory counters (72 bytes - Vista+)
-        [StructLayout(LayoutKind.Sequential, Pack = 8)] // Pack=8 ile 64-bit alignment
-        public struct PROCESS_MEMORY_COUNTERS_EX
-        {
-            public uint cb;
-            public uint PageFaultCount;
-            public uint PeakWorkingSetSize;     // 32-bit
-            public uint WorkingSetSize;         // 32-bit
-            public uint QuotaPeakPagedPoolUsage;
-            public uint QuotaPagedPoolUsage;
-            public uint QuotaPeakNonPagedPoolUsage;
-            public uint QuotaNonPagedPoolUsage;
-            public uint PagefileUsage;
-            public uint PeakPagefileUsage;
-            public uint PrivateUsage;           // Vista+ için eklendi
-        }
-
         ///////////////// ADVANCED MINIDUMP STREAM STRUCTS /////////////////
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct ThreadListStream
-        {
-            public uint NumberOfThreads;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct Thread
-        {
-            public uint ThreadId;
-            public uint SuspendCount;
-            public uint PriorityClass;
-            public uint Priority;
-            public IntPtr Teb;
-            public MINIDUMP_MEMORY_DESCRIPTOR Stack;
-            public CONTEXT Context;
-        }
 
         [StructLayout(LayoutKind.Sequential)]
         public struct HandleListStream
@@ -866,21 +351,6 @@ namespace WinEmuDump
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        public struct ThreadInfo
-        {
-            public uint ThreadId;
-            public uint DumpFlags;
-            public uint DumpError;
-            public uint ExitStatus;
-            public UInt64 CreateTime;
-            public UInt64 ExitTime;
-            public UInt64 KernelTime;
-            public UInt64 UserTime;
-            public UInt64 StartAddress;
-            public UInt64 Affinity;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
         public struct ThreadNamesStream
         {
             public uint NumberOfThreadNames;
@@ -891,38 +361,6 @@ namespace WinEmuDump
         {
             public uint ThreadId;
             public uint ThreadNameRva;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct MiscInfoStream
-        {
-            public uint SizeOfInfo;
-            public uint Flags1;
-            public uint ProcessId;
-            public uint ProcessCreateTime;
-            public uint ProcessUserTime;
-            public uint ProcessKernelTime;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct ExceptionStream
-        {
-            public uint ThreadId;
-            public uint Alignment;
-            public ExceptionRecord ExceptionRecord;
-            public uint ThreadContext;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct ExceptionRecord
-        {
-            public uint ExceptionCode;
-            public uint ExceptionFlags;
-            public IntPtr ExceptionRecordPtr;
-            public IntPtr ExceptionAddress;
-            public uint NumberParameters;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 15)]
-            public IntPtr[] ExceptionInformation;
         }
 
         // MINIDUMP_UNLOADED_MODULE - Unloaded module information
@@ -1000,42 +438,6 @@ namespace WinEmuDump
         {
             public uint NumOfEntries;
             public uint Version;
-        }
-
-        ///////////////// SYSTEM MEMORY INFO STRUCTS /////////////////
-
-        /// <summary>
-        /// MiniDumpSystemBasicInformation class - Sistem bellek bilgilerini wrapper olarak sağlar
-        /// </summary>
-        public class MiniDumpSystemBasicInformation
-        {
-            private MINIDUMP_SYSTEM_BASIC_INFORMATION _systemBasicInformation;
-            private MiniDumpFile _owner;
-
-            internal MiniDumpSystemBasicInformation(MINIDUMP_SYSTEM_BASIC_INFORMATION systemBasicInformation, MiniDumpFile owner)
-            {
-                _systemBasicInformation = systemBasicInformation;
-                _owner = owner;
-            }
-
-            public UInt32 TimerResolution { get { return _systemBasicInformation.TimerResolution; } }
-            public UInt32 PageSize { get { return _systemBasicInformation.PageSize; } }
-            public UInt32 NumberOfPhysicalPages { get { return _systemBasicInformation.NumberOfPhysicalPages; } }
-            public UInt32 LowestPhysicalPageNumber { get { return _systemBasicInformation.LowestPhysicalPageNumber; } }
-            public UInt32 HighestPhysicalPageNumber { get { return _systemBasicInformation.HighestPhysicalPageNumber; } }
-            public UInt32 AllocationGranularity { get { return _systemBasicInformation.AllocationGranularity; } }
-            public UInt64 MinimumUserModeAddress { get { return _systemBasicInformation.MinimumUserModeAddress; } }
-            public UInt64 MaximumUserModeAddress { get { return _systemBasicInformation.MaximumUserModeAddress; } }
-            public UInt64 ActiveProcessorsAffinityMask { get { return _systemBasicInformation.ActiveProcessorsAffinityMask; } }
-            public UInt32 NumberOfProcessors { get { return _systemBasicInformation.NumberOfProcessors; } }
-        }
-
-        /// <summary>
-        /// Placeholder class for MiniDumpFile (minimal implementation)
-        /// </summary>
-        public class MiniDumpFile
-        {
-            // Minimal implementation for MiniDumpSystemBasicInformation
         }
 
         /// <summary>
@@ -1296,18 +698,6 @@ namespace WinEmuDump
             public ulong Reserved1;
         }
 
-        // ModuleInfo - Temporary structure for collecting module data
-        [StructLayout(LayoutKind.Sequential)]
-        public struct ModuleInfo
-        {
-            public IntPtr BaseAddress;
-            public IntPtr Size;
-            public uint Timestamp;
-            public uint Checksum;
-            public uint ModuleNameRva;
-            public IntPtr ImageName;  // Temporary pointer for module name
-        }
-
         ///////////////// THREAD & EXCEPTION STRUCTS /////////////////
 
         // MINIDUMP_MEMORY_DESCRIPTOR - Memory region descriptor
@@ -1329,20 +719,6 @@ namespace WinEmuDump
             public ulong Teb;
             public MINIDUMP_MEMORY_DESCRIPTOR Stack;
             public MINIDUMP_LOCATION_DESCRIPTOR ThreadContext;
-        }
-
-        // MINIDUMP_THREAD_EX - Extended thread information (Windows Vista+)
-        [StructLayout(LayoutKind.Sequential, Pack = 4)]
-        public struct MINIDUMP_THREAD_EX
-        {
-            public uint ThreadId;
-            public uint SuspendCount;
-            public uint PriorityClass;
-            public uint Priority;
-            public ulong Teb;
-            public MINIDUMP_MEMORY_DESCRIPTOR Stack;
-            public MINIDUMP_LOCATION_DESCRIPTOR ThreadContext;
-            public MINIDUMP_LOCATION_DESCRIPTOR BackingStore;
         }
 
         // MINIDUMP_EXCEPTION - Exception information
@@ -1376,14 +752,6 @@ namespace WinEmuDump
         {
             public uint NumberOfThreads;
             // MINIDUMP_THREAD entries follow
-        }
-
-        // MINIDUMP_THREAD_EX_LIST - Extended thread list stream header
-        [StructLayout(LayoutKind.Sequential, Pack = 4)]
-        public struct MINIDUMP_THREAD_EX_LIST
-        {
-            public uint NumberOfThreads;
-            // MINIDUMP_THREAD_EX entries follow
         }
 
         // MINIDUMP_MISC_INFO_2 - Misc info for minidump (Windows XP+)
@@ -1429,169 +797,6 @@ namespace WinEmuDump
             public string DbgBldStr;
         }
 
-        ///////////////// PE PARSING STRUCTS FOR FUNCTION TABLE /////////////////
-
-        // RTL_PROCESS_MODULE_INFORMATION - Process modül bilgilerini almak için
-        [StructLayout(LayoutKind.Sequential)]
-        public struct RTL_PROCESS_MODULE_INFORMATION
-        {
-            public IntPtr Section;
-            public IntPtr MappedBase;
-            public IntPtr ImageBase;
-            public uint ImageSize;
-            public uint Flags;
-            public ushort LoadOrderIndex;
-            public ushort InitOrderIndex;
-            public ushort LoadCount;
-            public ushort OffsetToFileName;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)]
-            public byte[] FullPathName;
-
-            // Constructor ile FullPathName array'ini başlat
-            public RTL_PROCESS_MODULE_INFORMATION(bool initialize)
-            {
-                Section = IntPtr.Zero;
-                MappedBase = IntPtr.Zero;
-                ImageBase = IntPtr.Zero;
-                ImageSize = 0;
-                Flags = 0;
-                LoadOrderIndex = 0;
-                InitOrderIndex = 0;
-                LoadCount = 0;
-                OffsetToFileName = 0;
-                FullPathName = initialize ? new byte[256] : null;
-            }
-        }
-
-        // FunctionExport - Export function bilgileri
-        [StructLayout(LayoutKind.Sequential)]
-        public struct FunctionExport
-        {
-            public string FunctionName;
-            public IntPtr FunctionAddress;
-            public uint Ordinal;
-        }
-
-        // IMAGE_DOS_HEADER - PE dosya başlangıcı (Pack=1 ile binary alignment)
-        [StructLayout(LayoutKind.Sequential, Pack = 1)]
-        public struct IMAGE_DOS_HEADER
-        {
-            public ushort e_magic;    // MZ signature @ 0x00
-            public ushort e_cblp;     // @ 0x02
-            public ushort e_cp;       // @ 0x04
-            public ushort e_crlc;     // @ 0x06
-            public ushort e_cparhdr;  // @ 0x08
-            public ushort e_minalloc; // @ 0x0A
-            public ushort e_maxalloc; // @ 0x0C
-            public ushort e_ss;       // @ 0x0E
-            public ushort e_sp;       // @ 0x10
-            public ushort e_csum;     // @ 0x12
-            public ushort e_ip;       // @ 0x14
-            public ushort e_cs;       // @ 0x16
-            public ushort e_lfarlc;   // @ 0x18
-            public ushort e_ovno;     // @ 0x1A
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
-            public ushort[] e_res4;   // @ 0x1C - 16 bytes
-            public ushort e_oemid;    // @ 0x2C
-            public ushort e_oeminfo;  // @ 0x2E
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
-            public ushort[] e_res2;   // @ 0x30 - 40 bytes
-            public int e_lfanew;      // PE header offset @ 0x3C (64 bytes total)
-        }
-
-        // IMAGE_FILE_HEADER - PE file header
-        [StructLayout(LayoutKind.Sequential)]
-        public struct IMAGE_FILE_HEADER
-        {
-            public ushort Machine;
-            public ushort NumberOfSections;
-            public uint TimeDateStamp;
-            public uint PointerToSymbolTable;
-            public uint NumberOfSymbols;
-            public ushort SizeOfOptionalHeader;
-            public ushort Characteristics;
-        }
-
-        // IMAGE_DATA_DIRECTORY - PE data directory
-        [StructLayout(LayoutKind.Sequential)]
-        public struct IMAGE_DATA_DIRECTORY
-        {
-            public uint VirtualAddress;
-            public uint Size;
-        }
-
-        // IMAGE_OPTIONAL_HEADER - PE optional header
-        [StructLayout(LayoutKind.Sequential)]
-        public struct IMAGE_OPTIONAL_HEADER
-        {
-            public ushort Magic;
-            public byte MajorLinkerVersion;
-            public byte MinorLinkerVersion;
-            public uint SizeOfCode;
-            public uint SizeOfInitializedData;
-            public uint SizeOfUninitializedData;
-            public uint AddressOfEntryPoint;
-            public uint BaseOfCode;
-            public uint BaseOfData;
-            public uint ImageBase;
-            public uint SectionAlignment;
-            public uint FileAlignment;
-            public ushort MajorOperatingSystemVersion;
-            public ushort MinorOperatingSystemVersion;
-            public ushort MajorImageVersion;
-            public ushort MinorImageVersion;
-            public ushort MajorSubsystemVersion;
-            public ushort MinorSubsystemVersion;
-            public uint Win32VersionValue;
-            public uint SizeOfImage;
-            public uint SizeOfHeaders;
-            public uint CheckSum;
-            public ushort Subsystem;
-            public ushort DllCharacteristics;
-            public uint SizeOfStackReserve;
-            public uint SizeOfStackCommit;
-            public uint SizeOfHeapReserve;
-            public uint SizeOfHeapCommit;
-            public uint LoaderFlags;
-            public uint NumberOfRvaAndSizes;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
-            public IMAGE_DATA_DIRECTORY[] DataDirectory;
-        }
-
-        // IMAGE_NT_HEADERS64 - PE header (64-bit)
-        [StructLayout(LayoutKind.Sequential)]
-        public struct IMAGE_NT_HEADERS64
-        {
-            public uint Signature;        // PE signature (PE\0\0)
-            public IMAGE_FILE_HEADER FileHeader;
-            public IMAGE_OPTIONAL_HEADER OptionalHeader;
-        }
-
-        // IMAGE_EXPORT_DIRECTORY - Export directory table
-        [StructLayout(LayoutKind.Sequential)]
-        public struct IMAGE_EXPORT_DIRECTORY
-        {
-            public uint Characteristics;
-            public uint TimeDateStamp;
-            public ushort MajorVersion;
-            public ushort MinorVersion;
-            public uint Name;
-            public uint Base;
-            public uint NumberOfFunctions;
-            public uint NumberOfNames;
-            public uint AddressOfFunctions;     // RVA to function address array
-            public uint AddressOfNames;         // RVA to function name array
-            public uint AddressOfNameOrdinals;  // RVA to function ordinal array
-        }
-
-        // Constants for PE parsing
-        public const uint IMAGE_DOS_SIGNATURE = 0x5A4D;  // "MZ"
-        public const uint IMAGE_NT_SIGNATURE = 0x00004550; // "PE\0\0"
-        public const ushort IMAGE_FILE_MACHINE_AMD64 = 0x8664;
-        public const ushort IMAGE_FILE_MACHINE_I386 = 0x014c;
-        public const uint IMAGE_DIRECTORY_ENTRY_EXPORT = 0;  // Export Directory
-        public const uint IMAGE_DIRECTORY_ENTRY_EXCEPTION = 3; // Exception Directory
-
         // RUNTIME_FUNCTION struct for exception unwinding (x64)
         [StructLayout(LayoutKind.Sequential)]
         public struct RUNTIME_FUNCTION
@@ -1599,27 +804,6 @@ namespace WinEmuDump
             public uint BeginAddress;    // Function start RVA
             public uint EndAddress;      // Function end RVA
             public uint UnwindInfoAddress; // Unwind info RVA
-        }
-
-        // UNWIND_INFO struct for exception unwinding
-        [StructLayout(LayoutKind.Sequential)]
-        public struct UNWIND_INFO
-        {
-            public byte Version;         // Version (0x1)
-            public byte Flags;           // Flags
-            public byte SizeOfProlog;    // Size of function prologue
-            public byte CountOfCodes;    // Number of unwind codes
-            public byte FrameRegister;   // Frame register (0 = no frame register)
-            public byte FrameOffset;     // Frame register offset
-        }
-
-        // UNWIND_CODE struct for unwind codes
-        [StructLayout(LayoutKind.Sequential)]
-        public struct UNWIND_CODE
-        {
-            public byte CodeOffset;      // Offset in prolog
-            public byte UnwindOp;        // Unwind operation
-            public byte OpInfo;          // Operation info
         }
 
         ///////////////// PE SECTION HEADER /////////////////
@@ -1650,103 +834,6 @@ namespace WinEmuDump
         {
             public uint StreamType;
             public byte[] Data;
-        }
-
-        
-        /// <summary>
-        /// Thread CONTEXT bilgilerini tutan yardımcı struct
-        /// </summary>
-        internal struct ThreadContextInfo
-        {
-            public uint ThreadId;
-            public CONTEXT Context;
-        }
-
-        /// <summary>
-        /// Thread bilgilerini tutan detaylı struct
-        /// </summary>
-        internal struct ThreadDetailInfo
-        {
-            public uint ThreadId;
-            public CONTEXT Context;
-
-            public ThreadDetailInfo(uint threadId, CONTEXT context)
-            {
-                ThreadId = threadId;
-                Context = context;
-            }
-        }
-
-        /// <summary>
-        /// Gelişmiş thread bilgilerini tutan struct (MINIDUMP_THREAD için)
-        /// </summary>
-        [StructLayout(LayoutKind.Sequential)]
-        internal struct MinidumpThreadInfo
-        {
-            public uint ThreadId;
-            public ulong TebAddress;
-            public ulong StackBase;
-            public uint StackSize;
-            public CONTEXT Context;
-        }
-
-            /// <summary>
-    /// Sistem bilgilerini tutan struct
-    /// </summary>
-    public struct SystemInfoData
-    {
-        public uint MajorVersion;
-        public uint MinorVersion;
-        public uint BuildNumber;
-        public uint PlatformId;
-        public string CSDVersion;
-        public ushort ProcessorArchitecture;
-        public byte ProcessorCount;
-        public short ProcessorLevel;
-        public short ProcessorRevision;
-        public ushort SuiteMask;
-        public uint TotalPhysicalMemory;
-        public uint AvailablePhysicalMemory;
-        public uint TotalPageFile;
-        public uint AvailablePageFile;
-        public uint TotalVirtualMemory;
-        public uint AvailableVirtualMemory;
-        // CPU Information
-        public uint VendorId0;
-        public uint VendorId1;
-        public uint VendorId2;
-        public uint VersionInformation;
-        public uint FeatureInformation;
-        public uint AMDExtendedCpuFeatures;
-    }
-
-        /// <summary>
-        /// İşlem bilgilerini tutan struct
-        /// </summary>
-        public struct ProcessInfoData
-        {
-            public uint ProcessId;
-            public uint ParentProcessId;
-            public IntPtr CreateTime;
-            public IntPtr ExitTime;
-            public IntPtr UserTime;
-            public IntPtr KernelTime;
-            public string ImageName;
-            public string CommandLine;
-        }
-
-        /// <summary>
-        /// Handle bilgilerini tutan struct
-        /// </summary>
-        public struct HandleInfo
-        {
-            public uint HandleValue;
-            public uint GrantedAccess;
-            public byte ObjectTypeIndex;
-            public byte HandleAttributes;
-            public IntPtr ObjectPointer;
-            public string TypeName;
-            public string ObjectName;  // Object name (File path, Registry key, etc.)
         }
 
     }

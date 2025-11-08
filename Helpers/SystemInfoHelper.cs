@@ -1,7 +1,115 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using static WinEmuDump.Win32;
+
+
+/// <summary>
+/// Sistem bilgilerini tutan struct
+/// </summary>
+public struct SystemInfoData
+{
+    public uint MajorVersion;
+    public uint MinorVersion;
+    public uint BuildNumber;
+    public uint PlatformId;
+    public string CSDVersion;
+    public ushort ProcessorArchitecture;
+    public byte ProcessorCount;
+    public short ProcessorLevel;
+    public short ProcessorRevision;
+    public ushort SuiteMask;
+    public uint TotalPhysicalMemory;
+    public uint AvailablePhysicalMemory;
+    public uint TotalPageFile;
+    public uint AvailablePageFile;
+    public uint TotalVirtualMemory;
+    public uint AvailableVirtualMemory;
+    // CPU Information
+    public uint VendorId0;
+    public uint VendorId1;
+    public uint VendorId2;
+    public uint VersionInformation;
+    public uint FeatureInformation;
+    public uint AMDExtendedCpuFeatures;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct SYSTEM_MEMORY_INFO
+{
+    public uint TotalPhysicalMemory;
+    public uint AvailablePhysicalMemory;
+    public uint TotalPageFile;
+    public uint AvailablePageFile;
+    public uint TotalVirtual;
+    public uint AvailableVirtual;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct SYSTEM_INFO
+{
+    public uint dwOemId;
+    public uint dwPageSize;
+    public IntPtr lpMinimumApplicationAddress;
+    public IntPtr lpMaximumApplicationAddress;
+    public IntPtr dwActiveProcessorMask;
+    public uint dwNumberOfProcessors;
+    public uint dwProcessorType;
+    public uint dwAllocationGranularity;
+    public short wProcessorLevel;
+    public short wProcessorRevision;
+    public ushort wProcessorArchitecture;
+}
+
+///////////////// MEMORY STATUS STRUCTS /////////////////
+
+[StructLayout(LayoutKind.Sequential)]
+public struct MEMORYSTATUSEX
+{
+    public uint dwLength;
+    public uint dwMemoryLoad;
+    public ulong ullTotalPhys;
+    public ulong ullAvailPhys;
+    public ulong ullTotalPageFile;
+    public ulong ullAvailPageFile;
+    public ulong ullTotalVirtual;
+    public ulong ullAvailVirtual;
+    public ulong sullAvailExtendedVirtual;
+}
+
+
+[StructLayout(LayoutKind.Sequential)]
+public struct OSVERSIONINFOEX
+{
+    public int dwOSVersionInfoSize;
+    public int dwMajorVersion;
+    public int dwMinorVersion;
+    public int dwBuildNumber;
+    public int dwPlatformId;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+    public string szCSDVersion;
+    public short wServicePackMajor;
+    public short wServicePackMinor;
+    public short wSuiteMask;
+    public byte wProductType;
+    public byte wReserved;
+}
+
+/// <summary>
+/// İşlem bilgilerini tutan struct
+/// </summary>
+public struct ProcessInfoData
+{
+    public uint ProcessId;
+    public uint ParentProcessId;
+    public IntPtr CreateTime;
+    public IntPtr ExitTime;
+    public IntPtr UserTime;
+    public IntPtr KernelTime;
+    public string ImageName;
+    public string CommandLine;
+}
+
+
 
 
 namespace WinEmuDump.Helpers

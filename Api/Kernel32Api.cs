@@ -12,13 +12,13 @@ namespace WinEmuDump
         public static extern bool IsWow64Process(IntPtr hProcess, out bool Wow64Process);
 
         [DllImport("kernel32.dll")]
-        public static extern bool GlobalMemoryStatusEx(ref Win32.MEMORYSTATUSEX lpBuffer);
+        public static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
 
         [DllImport("kernel32.dll")]
         public static extern IntPtr GetCurrentProcess();
 
         [DllImport("kernel32.dll")]
-        public static extern void GetSystemInfo(out Win32.SYSTEM_INFO lpSystemInfo);
+        public static extern void GetSystemInfo(out SYSTEM_INFO lpSystemInfo);
 
         [DllImport("kernel32.dll")]
         public static extern uint GetTimeZoneInformation(out Win32.TIME_ZONE_INFORMATION lpTimeZoneInformation);

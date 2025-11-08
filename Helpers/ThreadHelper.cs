@@ -2,7 +2,209 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using static WinEmuDump.Win32;
+
+
+[StructLayout(LayoutKind.Sequential, Pack = 0)]
+public struct OBJECT_ATTRIBUTES
+{
+    public int Length;
+    public IntPtr RootDirectory;
+    public IntPtr ObjectName;
+    public uint Attributes;
+    public IntPtr SecurityDescriptor;
+    public IntPtr SecurityQualityOfService;
+}
+
+
+// x64 specific structures
+[StructLayout(LayoutKind.Sequential)]
+public struct M128A
+{
+    public ulong Low;
+    public long High;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct XSAVE_FORMAT
+{
+    public ushort ControlWord;
+    public ushort StatusWord;
+    public byte TagWord;
+    public byte Reserved1;
+    public ushort ErrorOpcode;
+    public uint ErrorOffset;
+    public uint ErrorSelector;
+    public uint DataOffset;
+    public uint DataSelector;
+    public uint MXCsr;
+    public uint MXCsr_Mask;
+    [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
+    public M128A[] FloatRegisters;
+    [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+    public M128A[] XmmRegisters;
+    [MarshalAs(UnmanagedType.ByValArray, SizeConst = 96)]
+    public byte[] Reserved4;
+}
+
+
+
+[StructLayout(LayoutKind.Sequential, Pack = 16)]
+public struct CONTEXT
+{
+    //
+    // Register parameter home addresses.
+    //
+    // N.B. These fields are for convience - they could be used to extend the
+    //      context record in the future.
+    //
+
+    public ulong P1Home;
+    public ulong P2Home;
+    public ulong P3Home;
+    public ulong P4Home;
+    public ulong P5Home;
+    public ulong P6Home;
+
+    //
+    // Control flags.
+    //
+
+    public uint ContextFlags;
+    public uint MxCsr;
+
+    //
+    // Segment Registers and processor flags.
+    //
+
+    public ushort SegCs;
+    public ushort SegDs;
+    public ushort SegEs;
+    public ushort SegFs;
+    public ushort SegGs;
+    public ushort SegSs;
+    public uint EFlags;
+
+    //
+    // Debug registers
+    //
+
+    public ulong Dr0;
+    public ulong Dr1;
+    public ulong Dr2;
+    public ulong Dr3;
+    public ulong Dr6;
+    public ulong Dr7;
+
+    //
+    // Integer registers.
+    //
+
+    public ulong Rax;
+    public ulong Rcx;
+    public ulong Rdx;
+    public ulong Rbx;
+    public ulong Rsp;
+    public ulong Rbp;
+    public ulong Rsi;
+    public ulong Rdi;
+    public ulong R8;
+    public ulong R9;
+    public ulong R10;
+    public ulong R11;
+    public ulong R12;
+    public ulong R13;
+    public ulong R14;
+    public ulong R15;
+
+    //
+    // Program counter.
+    //
+
+    public ulong Rip;
+
+    //
+    // Floating point state.
+    //
+
+    public XSAVE_FORMAT FltSave;
+
+    //
+    // Vector registers.
+    //
+
+    [MarshalAs(UnmanagedType.ByValArray, SizeConst = 26)]
+    public M128A[] VectorRegister;
+    public ulong VectorControl;
+    public ulong DebugControl;
+    public ulong LastBranchToRip;
+    public ulong LastBranchFromRip;
+    public ulong LastExceptionToRip;
+    public ulong LastExceptionFromRip;
+}
+
+
+/// <summary>
+/// Thread CONTEXT bilgilerini tutan yardımcı struct
+/// </summary>
+internal struct ThreadContextInfo
+{
+    public uint ThreadId;
+    public CONTEXT Context;
+}
+
+
+[StructLayout(LayoutKind.Sequential)]
+public struct ThreadInfo
+{
+    public uint ThreadId;
+    public uint DumpFlags;
+    public uint DumpError;
+    public uint ExitStatus;
+    public UInt64 CreateTime;
+    public UInt64 ExitTime;
+    public UInt64 KernelTime;
+    public UInt64 UserTime;
+    public UInt64 StartAddress;
+    public UInt64 Affinity;
+}
+
+
+
+[StructLayout(LayoutKind.Sequential)]
+public struct CLIENT_ID
+{
+    public IntPtr UniqueProcess;
+    public IntPtr UniqueThread;
+}
+
+
+/// <summary>
+/// THREAD_STACK_INFORMATION yapısı - Thread stack bilgileri için
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct THREAD_STACK_INFORMATION
+{
+    public IntPtr StackBase;
+    public IntPtr StackLimit;
+    public IntPtr StackCommit;
+    public IntPtr StackCommitMax;
+    public IntPtr StackReserved;
+}
+
+
+/// <summary>
+/// THREAD_BASIC_INFORMATION yapısı - Thread temel bilgileri için
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct THREAD_BASIC_INFORMATION
+{
+    public uint ExitStatus;
+    public IntPtr TebBaseAddress;
+    public CLIENT_ID ClientId;
+    public IntPtr AffinityMask;
+    public uint Priority;
+    public uint BasePriority;
+}
 
 namespace WinEmuDump.Helpers
 {
@@ -14,6 +216,9 @@ namespace WinEmuDump.Helpers
         public const uint THREAD_SUSPEND_RESUME = 0x0002;
         public const uint THREAD_GET_CONTEXT = 0x0008;
         public const uint THREAD_QUERY_INFORMATION = 0x0040;
+        public const uint ThreadBasicInformation = 0;
+        public const uint ThreadStackInformation = 5;
+        public const uint ThreadNameInformation = 0x24;
     }
 
     /// <summary>
@@ -38,7 +243,7 @@ namespace WinEmuDump.Helpers
                 {
                     uint ntStatus = NativeApi.NtQueryInformationThread(
                         threadHandle,
-                        ThreadBasicInformation,
+                        ThreadConstants.ThreadBasicInformation,
                         buffer,
                         (uint)Marshal.SizeOf(typeof(THREAD_BASIC_INFORMATION)),
                         out uint returnLength
@@ -83,7 +288,7 @@ namespace WinEmuDump.Helpers
                 {
                     uint ntStatus = NativeApi.NtQueryInformationThread(
                         threadHandle,
-                        ThreadStackInformation,
+                        ThreadConstants.ThreadStackInformation,
                         buffer,
                         (uint)Marshal.SizeOf(typeof(THREAD_STACK_INFORMATION)),
                         out uint returnLength
@@ -92,11 +297,11 @@ namespace WinEmuDump.Helpers
                     if (ntStatus == 0)
                     {
                         stackInfo = Marshal.PtrToStructure<THREAD_STACK_INFORMATION>(buffer);
-                        
+
                         // Stack boyutunu hesapla
                         uint stackSize = (uint)(stackInfo.StackLimit.ToInt64() - stackInfo.StackBase.ToInt64());
                         if (stackSize < 0) stackSize = (uint)Math.Abs(stackSize);
-                        
+
                         return (stackInfo.StackBase, stackSize);
                     }
                     else
@@ -232,7 +437,7 @@ namespace WinEmuDump.Helpers
                         };
                         OBJECT_ATTRIBUTES objAttr = new OBJECT_ATTRIBUTES { Length = (int)Marshal.SizeOf(typeof(OBJECT_ATTRIBUTES)) };
 
-                        uint ntStatus = NativeApi.NtOpenThread(ref threadHandle, THREAD_GET_CONTEXT, ref objAttr, ref clientId);
+                        uint ntStatus = NativeApi.NtOpenThread(ref threadHandle, ThreadConstants.THREAD_GET_CONTEXT, ref objAttr, ref clientId);
                         if (ntStatus != 0)
                         {
                             Console.WriteLine($"[WARNING] Thread {thread.Id} handle'ı açılamadı. NTSTATUS: 0x{ntStatus:X}");

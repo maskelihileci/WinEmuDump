@@ -2,9 +2,48 @@
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using static WinEmuDump.Win32;
 using static WinEmuDump.NativeApi;
 using WinEmuDump.Helpers;
+
+internal struct AccessRights
+{
+    public const uint TOKEN_ADJUST_PRIVILEGES = 0x00000020;
+    public const uint TOKEN_QUERY = 0x00000008;
+    public const uint PROCESS_QUERY_INFORMATION = 0x0400;
+    public const uint PROCESS_VM_READ = 0x0010;
+    public const uint PROCESS_DUP_HANDLE = 0x0040;
+    public const uint PROCESS_VM_OPERATION = 0x0008;
+
+}
+
+///////////////// STRUCTS /////////////////
+[StructLayout(LayoutKind.Sequential)]
+public struct LUID
+{
+    public uint LowPart;
+    public int HighPart;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct TOKEN_PRIVILEGES
+{
+    public uint PrivilegeCount;
+    public LUID Luid;
+    public uint Attributes;
+}
+
+/// <summary>
+/// Gelişmiş thread bilgilerini tutan struct (MINIDUMP_THREAD için)
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct MinidumpThreadInfo
+{
+    public uint ThreadId;
+    public ulong TebAddress;
+    public ulong StackBase;
+    public uint StackSize;
+    public CONTEXT Context;
+}
 
 
 namespace WinEmuDump
@@ -17,7 +56,7 @@ namespace WinEmuDump
             IntPtr tokenHandle = IntPtr.Zero;
             try
             {
-                uint ntstatus = NtOpenProcessToken(currentProcess, TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES, ref tokenHandle);
+                uint ntstatus = NtOpenProcessToken(currentProcess, AccessRights.TOKEN_QUERY | AccessRights.TOKEN_ADJUST_PRIVILEGES, ref tokenHandle);
                 if (ntstatus != 0)
                 {
                     Console.WriteLine("[-] Error calling NtOpenProcessToken. NTSTATUS: 0x" + ntstatus.ToString("X"));
@@ -95,11 +134,12 @@ namespace WinEmuDump
             // Get Ldr 
             IntPtr ldr_pointer = pebaddress + ldr_offset;
             IntPtr ldr_adress = MemoryHelper.ReadRemoteIntPtr(hProcess, ldr_pointer);
-            if (ldr_adress == IntPtr.Zero) {
+            if (ldr_adress == IntPtr.Zero)
+            {
                 Console.WriteLine("[-] PEB structure is not readable.");
                 Environment.Exit(0);
             }
-            
+
             IntPtr InInitializationOrderModuleList = ldr_adress + inInitializationOrderModuleList_offset;
             Console.WriteLine("[+] InInitializationOrderModuleList:\t\t0x" + InInitializationOrderModuleList.ToString("X"));
             IntPtr next_flink = MemoryHelper.ReadRemoteIntPtr(hProcess, InInitializationOrderModuleList);
@@ -115,7 +155,7 @@ namespace WinEmuDump
                 string base_dll_name = MemoryHelper.ReadRemoteUnicodeString(hProcess, buffer);
 
                 next_flink = MemoryHelper.ReadRemoteIntPtr(hProcess, (next_flink + 0x10));
-                
+
                 // Compare with DLL name we are searching
                 if (dll_name.ToLower() == base_dll_name.ToLower())
                 {
@@ -169,7 +209,7 @@ namespace WinEmuDump
             };
             OBJECT_ATTRIBUTES objAttr = new OBJECT_ATTRIBUTES();
 
-            uint ntstatus = NtOpenProcess(ref processHandle, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_DUP_HANDLE | PROCESS_VM_OPERATION, ref objAttr, ref client_id);
+            uint ntstatus = NtOpenProcess(ref processHandle, AccessRights.PROCESS_QUERY_INFORMATION | AccessRights.PROCESS_VM_READ | AccessRights.PROCESS_DUP_HANDLE | AccessRights.PROCESS_VM_OPERATION, ref objAttr, ref client_id);
             if (ntstatus != 0)
             {
                 Console.WriteLine($"[-] NtOpenProcess hatası. NTSTATUS: 0x{ntstatus:X}");
@@ -472,7 +512,7 @@ namespace WinEmuDump
                     }
                 }
 
-                Console.WriteLine($"[SUCCESS] Temel doğrulama başarılı - Dosya boyutu: {fileInfo.Length / (1024*1024.0):F2} MB");
+                Console.WriteLine($"[SUCCESS] Temel doğrulama başarılı - Dosya boyutu: {fileInfo.Length / (1024 * 1024.0):F2} MB");
                 return true;
             }
             catch (Exception ex)

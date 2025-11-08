@@ -2383,7 +2383,7 @@ namespace WinEmuDump
                 // FunctionTableStream'i oluşturmayı dene, başarısız olursa boş stream döndür
 
                 // Hedef process modüllerini al
-                List<Win32.RTL_PROCESS_MODULE_INFORMATION> modules = new List<Win32.RTL_PROCESS_MODULE_INFORMATION>();
+                List<RTL_PROCESS_MODULE_INFORMATION> modules = new List<RTL_PROCESS_MODULE_INFORMATION>();
 
                 // Hedef process için module listesini al
                 if (hProcess != IntPtr.Zero && PeHelper.GetProcessModules(hProcess, out modules))
@@ -2535,7 +2535,7 @@ namespace WinEmuDump
         /// <summary>
         /// RTL_PROCESS_MODULE_INFORMATION'dan modül adını çıkarır
         /// </summary>
-        private static string ExtractModuleName(Win32.RTL_PROCESS_MODULE_INFORMATION module)
+        private static string ExtractModuleName(RTL_PROCESS_MODULE_INFORMATION module)
         {
             try
             {
@@ -2601,8 +2601,8 @@ namespace WinEmuDump
                 systemMemoryInfo.Flags = 0;
 
                 // MEMORYSTATUSEX ile gerçek bellek bilgilerini al
-                Win32.MEMORYSTATUSEX memStatus = new Win32.MEMORYSTATUSEX();
-                memStatus.dwLength = (uint)Marshal.SizeOf(typeof(Win32.MEMORYSTATUSEX));
+                MEMORYSTATUSEX memStatus = new MEMORYSTATUSEX();
+                memStatus.dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
 
                 if (Kernel32Api.GlobalMemoryStatusEx(ref memStatus))
                 {
@@ -2718,7 +2718,7 @@ namespace WinEmuDump
             Win32.ThreadInfoListStream threadInfoListHeader = new Win32.ThreadInfoListStream
             {
                 SizeOfHeader = (uint)Marshal.SizeOf(typeof(Win32.ThreadInfoListStream)), // 12 byte
-                SizeOfEntry = (uint)Marshal.SizeOf(typeof(Win32.ThreadInfo)), // 48 byte (ThreadInfo boyutu)
+                SizeOfEntry = (uint)Marshal.SizeOf(typeof(ThreadInfo)), // 48 byte (ThreadInfo boyutu)
                 NumberOfEntries = (uint)threadList.Count
             };
             byte[] headerBytes = StructHelper.StructToByteArray(threadInfoListHeader);
@@ -2746,7 +2746,7 @@ namespace WinEmuDump
                 Console.WriteLine($"[INFO] Thread {threadInfo.ThreadId} için gerçekçi zaman değerleri oluşturuldu: UserTime={userTime}, KernelTime={kernelTime}");
 
                 // Verilen thread bilgilerinden ThreadInfo oluştur
-                Win32.ThreadInfo threadInfoEntry = new Win32.ThreadInfo
+                ThreadInfo threadInfoEntry = new ThreadInfo
                 {
                     ThreadId = threadInfo.ThreadId,
                     DumpFlags = 0x0000003F, // Tüm bilgiler geçerli
@@ -2768,7 +2768,7 @@ namespace WinEmuDump
 
             Console.WriteLine($"[DEBUG] ThreadInfoListStream boyutu: {threadInfoData.Count} bytes");
             Console.WriteLine($"[DEBUG] - Header: {headerBytes.Length} bytes");
-            Console.WriteLine($"[DEBUG] - ThreadInfo entries: {threadList.Count * Marshal.SizeOf(typeof(Win32.ThreadInfo))} bytes");
+            Console.WriteLine($"[DEBUG] - ThreadInfo entries: {threadList.Count * Marshal.SizeOf(typeof(ThreadInfo))} bytes");
 
             return new MinidumpStream
             {
@@ -2841,7 +2841,7 @@ namespace WinEmuDump
 
                 // Temel token bilgilerini almaya çalış
                 IntPtr processToken = IntPtr.Zero;
-                uint ntStatus = NativeApi.NtOpenProcessToken(IntPtr.Zero, TOKEN_QUERY, ref processToken); // Current process token
+                uint ntStatus = NativeApi.NtOpenProcessToken(IntPtr.Zero, AccessRights.TOKEN_QUERY, ref processToken); // Current process token
 
                 if (ntStatus == 0 && processToken != IntPtr.Zero)
                 {

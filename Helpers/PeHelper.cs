@@ -3,7 +3,43 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
-using static WinEmuDump.Win32;
+
+// IMAGE_EXPORT_DIRECTORY - Export directory table
+[StructLayout(LayoutKind.Sequential)]
+public struct IMAGE_EXPORT_DIRECTORY
+{
+    public uint Characteristics;
+    public uint TimeDateStamp;
+    public ushort MajorVersion;
+    public ushort MinorVersion;
+    public uint Name;
+    public uint Base;
+    public uint NumberOfFunctions;
+    public uint NumberOfNames;
+    public uint AddressOfFunctions;     // RVA to function address array
+    public uint AddressOfNames;         // RVA to function name array
+    public uint AddressOfNameOrdinals;  // RVA to function ordinal array
+}
+
+internal struct PEHeaderConstants
+{
+    public const uint IMAGE_DOS_SIGNATURE = 0x5A4D;  // "MZ"
+    public const uint IMAGE_NT_SIGNATURE = 0x00004550; // "PE\0\0"
+    public const ushort IMAGE_FILE_MACHINE_AMD64 = 0x8664;
+    public const ushort IMAGE_FILE_MACHINE_I386 = 0x014c;
+    public const uint IMAGE_DIRECTORY_ENTRY_EXPORT = 0;  // Export Directory
+    public const uint IMAGE_DIRECTORY_ENTRY_EXCEPTION = 3; // Exception Directory
+}
+
+
+// FunctionExport - Export function bilgileri
+[StructLayout(LayoutKind.Sequential)]
+public struct FunctionExport
+{
+    public string FunctionName;
+    public IntPtr FunctionAddress;
+    public uint Ordinal;
+}
 
 namespace WinEmuDump.Helpers
 {
@@ -52,7 +88,7 @@ namespace WinEmuDump.Helpers
         public static bool ParsePeExportsSafe(IntPtr hProcess, IntPtr moduleBase, out List<FunctionExport> exports)
         {
             exports = new List<FunctionExport>();
-            
+
             try
             {
                 // Memory address validation
@@ -61,34 +97,34 @@ namespace WinEmuDump.Helpers
                     Console.WriteLine($"[DEBUG] ParsePeExportsSafe: Null module base address");
                     return false;
                 }
-                
+
                 long baseAddress = moduleBase.ToInt64();
-                
+
                 // Geçersiz adres aralıkları kontrolü
                 if (baseAddress < 0x10000 || baseAddress > 0x7FFFFFFFFFFFL)
                 {
                     Console.WriteLine($"[DEBUG] ParsePeExportsSafe: Module base address geçersiz aralıkta: 0x{baseAddress:X}");
                     return false;
                 }
-                
+
                 // DOS signature kontrolü
                 if (!ValidateDosSignature(hProcess, moduleBase))
                     return false;
-                
+
                 // PE header offset'i alma
                 int peOffset = GetPeOffset(hProcess, moduleBase);
                 if (peOffset <= 0)
                     return false;
-                
+
                 // PE signature kontrolü
                 if (!ValidatePeSignature(hProcess, moduleBase, peOffset))
                     return false;
-                
+
                 // File header okuma
                 var fileHeaderInfo = ReadFileHeader(hProcess, moduleBase, peOffset);
                 if (fileHeaderInfo == null)
                     return false;
-                
+
                 // Export directory parsing
                 return ParseExportDirectory(hProcess, moduleBase, peOffset, fileHeaderInfo, exports);
             }
@@ -111,9 +147,9 @@ namespace WinEmuDump.Helpers
                 Console.WriteLine($"[DEBUG] DOS magic okunamıyor, NTSTATUS=0x{ntStatus:X}");
                 return false;
             }
-            
+
             ushort dosMagic = (ushort)(dosMagicBytes[0] | (dosMagicBytes[1] << 8));
-            return dosMagic == IMAGE_DOS_SIGNATURE;
+            return dosMagic == PEHeaderConstants.IMAGE_DOS_SIGNATURE;
         }
 
         /// <summary>
@@ -125,7 +161,7 @@ namespace WinEmuDump.Helpers
             uint ntStatus = MemoryHelper.SafeReadVirtualMemory(hProcess, IntPtr.Add(moduleBase, 0x3C), peOffsetBytes, 4);
             if (ntStatus != 0)
                 return 0;
-            
+
             int peOffset = BitConverter.ToInt32(peOffsetBytes, 0);
             return (peOffset > 0 && peOffset <= 0x100000) ? peOffset : 0;
         }
@@ -139,9 +175,9 @@ namespace WinEmuDump.Helpers
             uint ntStatus = MemoryHelper.SafeReadVirtualMemory(hProcess, IntPtr.Add(moduleBase, peOffset), peSignatureBytes, 4);
             if (ntStatus != 0)
                 return false;
-            
+
             uint peSignature = BitConverter.ToUInt32(peSignatureBytes, 0);
-            return peSignature == IMAGE_NT_SIGNATURE;
+            return peSignature == PEHeaderConstants.IMAGE_NT_SIGNATURE;
         }
 
         /// <summary>
@@ -154,7 +190,7 @@ namespace WinEmuDump.Helpers
             uint ntStatus = MemoryHelper.SafeReadVirtualMemory(hProcess, IntPtr.Add(moduleBase, fileHeaderOffset), fileHeaderBytes, 20);
             if (ntStatus != 0)
                 return null;
-            
+
             return new FileHeaderInfo
             {
                 Machine = BitConverter.ToUInt16(fileHeaderBytes, 0),
@@ -174,16 +210,16 @@ namespace WinEmuDump.Helpers
                 ushort magic = ReadOptionalHeaderMagic(hProcess, moduleBase, optionalHeaderOffset);
                 if (magic == 0)
                     return false;
-                
+
                 var dataDirInfo = GetDataDirectoryInfo(hProcess, moduleBase, optionalHeaderOffset, magic);
                 if (dataDirInfo == null)
                     return false;
-                
+
                 // Export directory bilgilerini oku
                 var exportInfo = ReadExportDirectoryInfo(hProcess, moduleBase, dataDirInfo.ExportRva);
                 if (exportInfo == null)
                     return false;
-                
+
                 // Function export'larını parse et
                 return ParseExportFunctions(hProcess, moduleBase, exportInfo, exports);
             }
@@ -203,7 +239,7 @@ namespace WinEmuDump.Helpers
             uint ntStatus = MemoryHelper.SafeReadVirtualMemory(hProcess, IntPtr.Add(moduleBase, optionalHeaderOffset), magicBytes, 2);
             if (ntStatus != 0)
                 return 0;
-            
+
             return BitConverter.ToUInt16(magicBytes, 0);
         }
 
@@ -217,15 +253,15 @@ namespace WinEmuDump.Helpers
             uint ntStatus = MemoryHelper.SafeReadVirtualMemory(hProcess, IntPtr.Add(moduleBase, dataDirectoryOffset), rvaSizesBytes, 4);
             if (ntStatus != 0)
                 return null;
-            
+
             uint numberOfRvaAndSizes = BitConverter.ToUInt32(rvaSizesBytes, 0);
-            if (numberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_EXPORT)
+            if (numberOfRvaAndSizes <= PEHeaderConstants.IMAGE_DIRECTORY_ENTRY_EXPORT)
                 return null;
-            
+
             return new DataDirectoryInfo
             {
                 NumberOfRvaAndSizes = numberOfRvaAndSizes,
-                ExportRvaOffset = dataDirectoryOffset + (int)(IMAGE_DIRECTORY_ENTRY_EXPORT * 8)
+                ExportRvaOffset = dataDirectoryOffset + (int)(PEHeaderConstants.IMAGE_DIRECTORY_ENTRY_EXPORT * 8)
             };
         }
 
@@ -238,7 +274,7 @@ namespace WinEmuDump.Helpers
             uint ntStatus = MemoryHelper.SafeReadVirtualMemory(hProcess, IntPtr.Add(moduleBase, exportRva), exportDirBytes, 40);
             if (ntStatus != 0)
                 return null;
-            
+
             return new ExportDirectoryInfo
             {
                 NumberOfFunctions = BitConverter.ToUInt32(exportDirBytes, 20),
@@ -257,30 +293,30 @@ namespace WinEmuDump.Helpers
         {
             if (exportInfo.NumberOfFunctions == 0 || exportInfo.NumberOfFunctions >= 0x10000)
                 return false;
-            
+
             uint maxFunctions = Math.Min(exportInfo.NumberOfFunctions, 1000u);
-            
+
             for (uint i = 0; i < maxFunctions; i++)
             {
                 // Function address RVA'sini oku
                 byte[] funcRvaBytes = new byte[4];
-                uint ntStatus = MemoryHelper.SafeReadVirtualMemory(hProcess, 
-                    IntPtr.Add(moduleBase, (int)(exportInfo.AddressOfFunctions + i * 4)), 
+                uint ntStatus = MemoryHelper.SafeReadVirtualMemory(hProcess,
+                    IntPtr.Add(moduleBase, (int)(exportInfo.AddressOfFunctions + i * 4)),
                     funcRvaBytes, 4);
                 if (ntStatus != 0)
                     continue;
-                
+
                 uint functionRva = BitConverter.ToUInt32(funcRvaBytes, 0);
                 if (functionRva == 0)
                     continue;
-                
+
                 var functionExport = new FunctionExport
                 {
                     FunctionAddress = IntPtr.Add(moduleBase, (int)functionRva),
                     Ordinal = exportInfo.BaseOrdinal + i,
                     FunctionName = $"Ordinal_{exportInfo.BaseOrdinal + i}"
                 };
-                
+
                 // Function name'i al (varsa)
                 if (exportInfo.NumberOfNames > 0 && i < exportInfo.NumberOfNames)
                 {
@@ -288,10 +324,10 @@ namespace WinEmuDump.Helpers
                     if (!string.IsNullOrEmpty(functionName))
                         functionExport.FunctionName = functionName;
                 }
-                
+
                 exports.Add(functionExport);
             }
-            
+
             return exports.Count > 0;
         }
 
@@ -348,9 +384,9 @@ namespace WinEmuDump.Helpers
         /// <summary>
         /// PSAPI kullanarak process modüllerini alır - Handle'ları base address'lere çevirir
         /// </summary>
-        public static bool GetProcessModules(IntPtr hProcess, out List<Win32.RTL_PROCESS_MODULE_INFORMATION> modules)
+        public static bool GetProcessModules(IntPtr hProcess, out List<RTL_PROCESS_MODULE_INFORMATION> modules)
         {
-            modules = new List<Win32.RTL_PROCESS_MODULE_INFORMATION>();
+            modules = new List<RTL_PROCESS_MODULE_INFORMATION>();
 
             try
             {
@@ -385,7 +421,7 @@ namespace WinEmuDump.Helpers
                                 continue;
                             }
 
-                            Win32.RTL_PROCESS_MODULE_INFORMATION moduleInfo = new Win32.RTL_PROCESS_MODULE_INFORMATION(true);
+                            RTL_PROCESS_MODULE_INFORMATION moduleInfo = new RTL_PROCESS_MODULE_INFORMATION(true);
 
                             // Module base address'i al (handle genellikle base address'tir)
                             moduleInfo.ImageBase = moduleHandle;
@@ -579,7 +615,7 @@ namespace WinEmuDump.Helpers
                 }
 
                 uint peSignature = BitConverter.ToUInt32(peSigBytes, 0);
-                if (peSignature != IMAGE_NT_SIGNATURE)
+                if (peSignature != PEHeaderConstants.IMAGE_NT_SIGNATURE)
                 {
                     return sections;
                 }
