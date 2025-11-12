@@ -636,21 +636,13 @@ namespace WinEmuDump
                         streams[i] = CreateExceptionStream(threadIdForExceptionFix, currentOffset);
                     }
 
-                    // Memory64List için BaseRva düzeltmesi
+                    // Memory64List için BaseRva düzeltmesi (Döngü sonrası yapılacak)
                     if (memory64ListStreamIndex >= 0 && i == memory64ListStreamIndex)
                     {
-                        // BaseRva = header + directory + tüm stream'lerin boyutları (raw data'nın başlangıç yeri)
-                        uint headerSize = (uint)Marshal.SizeOf(typeof(MinidumpHeader));
-                        uint directorySize = (uint)(streams.Count * Marshal.SizeOf(typeof(MinidumpStreamDirectoryEntry)));
-                        uint totalStreamSize = 0;
-                        foreach (var s in streams)
-                        {
-                            totalStreamSize += (uint)s.Data.Length;
-                        }
-                        uint baseRvaForRawData = headerSize + directorySize + totalStreamSize;
-
-                        Console.WriteLine($"[DEBUG] Memory64List BaseRva düzeltiliyor: 0x{baseRvaForRawData:X}");
-                        var (updatedStream, _) = CreateMemory64ListStreamSeparate(hProcess, currentOffset, baseRvaForRawData);
+                        // Bu aşamada BaseRva'yı bilmiyoruz. Geçici bir değerle (0) stream'i yeniden oluşturuyoruz.
+                        // Gerçek BaseRva, tüm stream boyutları kesinleştikten sonra döngünün sonunda hesaplanıp yazılacak.
+                        Console.WriteLine($"[DEBUG] Memory64List stream için RVA düzeltiliyor (BaseRva daha sonra yamalanacak), base offset: 0x{currentOffset:X}");
+                        var (updatedStream, _) = CreateMemory64ListStreamSeparate(hProcess, currentOffset, 0); // BaseRva = 0 (geçici)
                         streams[i] = updatedStream;
                     }
 
@@ -777,6 +769,18 @@ namespace WinEmuDump
 
                     streamDirectoryBytes.AddRange(StructHelper.StructToByteArray(entry));
                     currentOffset += (uint)streams[i].Data.Length;
+                }
+
+                // DÖNGÜ SONRASI: Memory64ListStream için BaseRva'yı son ve doğru değerle yamala.
+                // 'currentOffset' artık tüm stream verilerinin bittiği ve raw memory verisinin başlayacağı RVA'yı içeriyor.
+                if (memory64ListStreamIndex >= 0 && streams[memory64ListStreamIndex].Data.Length > 0)
+                {
+                    Console.WriteLine($"[DEBUG] Memory64List BaseRva'sı son değerle yamalanıyor: 0x{currentOffset:X}");
+
+                    // MINIDUMP_MEMORY64_LIST yapısı stream verisinin başında yer alır.
+                    // BaseRva alanı 8. byte'tadır (ilk 8 byte NumberOfMemoryRanges).
+                    byte[] baseRvaBytes = BitConverter.GetBytes((ulong)currentOffset);
+                    Array.Copy(baseRvaBytes, 0, streams[memory64ListStreamIndex].Data, 8, 8);
                 }
 
                 // Tüm veriyi birleştir
@@ -1218,6 +1222,10 @@ namespace WinEmuDump
         }
         /// <summary>
         /// Memory64List stream'i oluşturur - AYRI: descriptors ve raw data
+        /// NOT:
+        ///  - İlk çağrı: rawDataBaseRva = 0 => sadece descriptor + rawData döner, BaseRva=0 (ilk geçiş)
+        ///  - İkinci çağrı: rawDataBaseRva != 0 => SADECE descriptor döner, BaseRva=rawDataBaseRva, rawData boş
+        /// Böylece raw memory sadece bir kez üretilir, BaseRva ise BuildAdvancedMinidump içinde doğru global RVA ile set edilir.
         /// </summary>
         private static (MinidumpStream stream, byte[] rawData) CreateMemory64ListStreamSeparate(IntPtr hProcess, uint streamBaseRva = 0, uint rawDataBaseRva = 0)
         {
@@ -1228,9 +1236,10 @@ namespace WinEmuDump
                 IntPtr memAddress = IntPtr.Zero;
                 long maxAddress = 0x7FFFFFFEFFFF;
 
-                // Bellek limitleri - toplam okunacak belleğin sınırlandırılması
-                const long MAX_TOTAL_MEMORY_SIZE = 512 * 1024 * 1024; // 512MB limit
-                const long MAX_REGION_SIZE = 64 * 1024 * 1024; // 64MB per region limit
+                // Bellek toplama politikası:
+                // - MEM_COMMIT && !PAGE_NOACCESS olan TÜM bölgeler dahil edilecek.
+                // - Global veya bölgesel boyut limiti uygulanmıyor.
+                //   (MiniDumpWithFullMemory benzeri davranış; büyük bölgeler de dump'a girecek.)
                 long totalMemorySize = 0;
                 int processedRegions = 0;
 
@@ -1249,20 +1258,8 @@ namespace WinEmuDump
                     {
                         long regionSize = (long)mbi.RegionSize;
 
-                        // Bölge boyutu limiti kontrolü
-                        if (regionSize > MAX_REGION_SIZE)
-                        {
-                            Console.WriteLine($"[WARNING] Bölge boyutu çok büyük ({regionSize:X} bytes), atlanıyor");
-                            memAddress = (IntPtr)((ulong)memAddress + (ulong)mbi.RegionSize);
-                            continue;
-                        }
-
-                        // Toplam bellek limiti kontrolü
-                        if (totalMemorySize + regionSize > MAX_TOTAL_MEMORY_SIZE)
-                        {
-                            Console.WriteLine($"[WARNING] Toplam bellek limiti aşıldı ({totalMemorySize:X} + {regionSize:X} > {MAX_TOTAL_MEMORY_SIZE:X}), tarama durduruluyor");
-                            break;
-                        }
+                        // Her geçerli bölgeyi istatistik için say
+                        totalMemorySize += regionSize;
 
                         Win32.Memory64Info memInfo = new Win32.Memory64Info
                         {
@@ -1291,7 +1288,9 @@ namespace WinEmuDump
 
                 // Raw memory data - Sadece başarılı okunan bölgeleri dahil et
                 const int MAX_CHUNK_SIZE = 64 * 1024; // 64KB chunks (daha küçük chunk'lar daha güvenilir)
+                const long MAX_TOTAL_MEMORY_MB = 1800; // 1.8GB limit (List<byte> 2GB limiti için güvenlik payı)
                 var validRegions = new List<Win32.Memory64Info>();
+                long totalValidSize = 0;
 
                 // İlk olarak bölgeleri test et - sadece tamamen okunabilenleri dahil et
                 foreach (var memInfo in memoryRegions)
@@ -1324,12 +1323,23 @@ namespace WinEmuDump
 
                     if (regionReadable)
                     {
-                        validRegions.Add(memInfo);
-                        // Bölge başarıyla doğrulandı
+                        // Bellek boyutu limiti kontrolü
+                        long regionSize = (long)memInfo.Memory.DataSize;
+                        if (totalValidSize + regionSize <= MAX_TOTAL_MEMORY_MB * 1024 * 1024)
+                        {
+                            validRegions.Add(memInfo);
+                            totalValidSize += regionSize;
+                            Console.WriteLine($"[INFO] Bölge eklendi: 0x{memInfo.StartOfMemoryRange:X} ({regionSize / (1024 * 1024)} MB), Toplam: {totalValidSize / (1024 * 1024)} MB");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"[WARNING] Bölge boyutu limiti aşıldı, atlanıyor: 0x{memInfo.StartOfMemoryRange:X} ({regionSize / (1024 * 1024)} MB)");
+                            Console.WriteLine($"[INFO] Mevcut toplam: {totalValidSize / (1024 * 1024)} MB, Limit: {MAX_TOTAL_MEMORY_MB} MB");
+                        }
                     }
                 }
 
-                Console.WriteLine($"[INFO] {validRegions.Count} geçerli bölge bulundu");
+                Console.WriteLine($"[INFO] {validRegions.Count} geçerli bölge bulundu, toplam {totalValidSize / (1024 * 1024)} MB");
 
                 if (validRegions.Count == 0)
                 {
@@ -1344,80 +1354,158 @@ namespace WinEmuDump
                 var sortedRegions = validRegions.OrderBy(r => r.StartOfMemoryRange).ToList();
 
                 // Memory64List header
+                // Eğer rawDataBaseRva == 0 ise (ilk geçiş):
+                //   - BaseRva = 0 (sadece descriptor üretimi)
+                // Eğer rawDataBaseRva != 0 ise (ikinci geçiş):
+                //   - BaseRva = rawDataBaseRva (gerçek global RVA)
                 uint descriptorCount = (uint)sortedRegions.Count;
-                ulong memoryDataBaseRva = rawDataBaseRva > 0 ? rawDataBaseRva :
-                    streamBaseRva + (ulong)Marshal.SizeOf(typeof(MINIDUMP_MEMORY64_LIST)) +
-                    (ulong)(descriptorCount * Marshal.SizeOf(typeof(MINIDUMP_MEMORY_DESCRIPTOR64)));
+                ulong memoryDataBaseRva = rawDataBaseRva > 0 ? rawDataBaseRva : 0;
 
-                MINIDUMP_MEMORY64_LIST memory64List = new MINIDUMP_MEMORY64_LIST
+                // Güvenli struct oluşturma
+                MINIDUMP_MEMORY64_LIST memory64List;
+                try
                 {
-                    NumberOfMemoryRanges = (ulong)sortedRegions.Count,
-                    BaseRva = memoryDataBaseRva
-                };
+                    memory64List = new MINIDUMP_MEMORY64_LIST
+                    {
+                        NumberOfMemoryRanges = (ulong)sortedRegions.Count,
+                        BaseRva = memoryDataBaseRva
+                    };
+                }
+                catch (Exception headerEx)
+                {
+                    Console.WriteLine($"[WARNING] Memory64List header oluşturma hatası: {headerEx.Message}");
+                    return (new MinidumpStream
+                    {
+                        StreamType = MINIDUMP_STREAM_TYPE_Memory64List,
+                        Data = new byte[0]
+                    }, new byte[0]);
+                }
 
                 Console.WriteLine($"[DEBUG] Memory64List: {sortedRegions.Count} regions, BaseRva=0x{memoryDataBaseRva:X}");
 
                 List<byte> descriptorData = new List<byte>();
-                descriptorData.AddRange(StructHelper.StructToByteArray(memory64List));
 
-                // Descriptor'ları ekle (sadece metadata)
-                foreach (var region in sortedRegions)
+                // Header + descriptor'ları tek seferde, güvenli uzunluk kontrolüyle ekle
+                try
                 {
-                    MINIDUMP_MEMORY_DESCRIPTOR64 descriptor = new MINIDUMP_MEMORY_DESCRIPTOR64
+                    descriptorData.AddRange(StructHelper.StructToByteArray(memory64List));
+
+                    int descIndex = 0;
+                    foreach (var region in sortedRegions)
                     {
-                        StartOfMemoryRange = region.StartOfMemoryRange,
-                        DataSize = region.Memory.DataSize
-                    };
-                    descriptorData.AddRange(StructHelper.StructToByteArray(descriptor));
-                }
-
-                // Raw memory data'yı oku (ayrı array)
-                List<byte> rawMemoryData = new List<byte>();
-
-                foreach (var memInfo in sortedRegions)
-                {
-                    long remainingSize = (long)memInfo.Memory.DataSize;
-                    long currentOffset = 0;
-
-                    while (remainingSize > 0)
-                    {
-                        int chunkSize = (int)Math.Min(remainingSize, MAX_CHUNK_SIZE);
-                        IntPtr chunkAddress = IntPtr.Add((IntPtr)(long)memInfo.StartOfMemoryRange, (int)currentOffset);
-
                         try
                         {
-                            byte[] buffer = new byte[chunkSize];
-                            uint ntStatus = NativeApi.NtReadVirtualMemory(hProcess, chunkAddress, buffer, chunkSize, out IntPtr bytesReadPtr);
-                            uint bytesRead = (uint)bytesReadPtr.ToInt64();
-
-                            if (ntStatus == 0 && bytesRead == chunkSize)
+                            MINIDUMP_MEMORY_DESCRIPTOR64 descriptor = new MINIDUMP_MEMORY_DESCRIPTOR64
                             {
-                                rawMemoryData.AddRange(buffer);
-                            }
-                            else
-                            {
-                                // Padding ile doldur
-                                rawMemoryData.AddRange(new byte[chunkSize]);
-                            }
+                                StartOfMemoryRange = region.StartOfMemoryRange,
+                                DataSize = region.Memory.DataSize
+                            };
+                            byte[] descBytes = StructHelper.StructToByteArray(descriptor);
+                            descriptorData.AddRange(descBytes);
+                            descIndex++;
+                            Console.WriteLine($"[DEBUG] Descriptor {descIndex}: {descBytes.Length} bytes, Start=0x{region.StartOfMemoryRange:X}, Size={region.Memory.DataSize}");
                         }
-                        catch
+                        catch (Exception descEx)
                         {
-                            // Padding ile doldur
-                            rawMemoryData.AddRange(new byte[chunkSize]);
+                            Console.WriteLine($"[WARNING] Descriptor {descIndex + 1} oluşturma hatası: {descEx.Message}, atlanıyor");
+                            continue;
                         }
-
-                        remainingSize -= chunkSize;
-                        currentOffset += chunkSize;
                     }
+                    Console.WriteLine($"[DEBUG] Toplam {descIndex} descriptor başarıyla eklendi");
+                }
+                catch (Exception ex)
+                {
+                    // Eğer burada "hedef dizi yeterince uzun değildi" veya marshal kaynaklı bir hata oluşursa
+                    // tüm Memory64List'i güvenli şekilde iptal ediyoruz.
+                    Console.WriteLine($"[WARNING] Memory64List descriptor oluşturulurken hata: {ex.Message}");
+                    return (new MinidumpStream
+                    {
+                        StreamType = MINIDUMP_STREAM_TYPE_Memory64List,
+                        Data = new byte[0]
+                    }, new byte[0]);
                 }
 
-                Console.WriteLine($"[SUCCESS] Memory64List: {descriptorData.Count} bytes descriptors, {rawMemoryData.Count / (1024 * 1024)} MB raw data");
+                // Raw memory data:
+                //  - İlk çağrıda (rawDataBaseRva == 0): gerçek raw data okunur ve döndürülür.
+                //  - İkinci çağrıda (rawDataBaseRva != 0): raw data TEKRAR okunmaz; sadece descriptor güncellenir.
+                List<byte> rawMemoryData = new List<byte>();
 
-                return (new MinidumpStream
+                if (rawDataBaseRva == 0)
                 {
-                    StreamType = MINIDUMP_STREAM_TYPE_Memory64List,
-                    Data = descriptorData.ToArray()
-                }, rawMemoryData.ToArray());
+                    // İlk geçiş: raw memory verisini oku
+                    foreach (var memInfo in sortedRegions)
+                    {
+                        long remainingSize = (long)memInfo.Memory.DataSize;
+                        long currentOffset = 0;
+
+                        while (remainingSize > 0)
+                        {
+                            int chunkSize = (int)Math.Min(remainingSize, MAX_CHUNK_SIZE);
+                            IntPtr chunkAddress = IntPtr.Add((IntPtr)(long)memInfo.StartOfMemoryRange, (int)currentOffset);
+
+                            try
+                            {
+                                byte[] buffer = new byte[chunkSize];
+                                uint ntStatus = NativeApi.NtReadVirtualMemory(hProcess, chunkAddress, buffer, chunkSize, out IntPtr bytesReadPtr);
+                                uint bytesRead = (uint)bytesReadPtr.ToInt64();
+
+                                if (ntStatus == 0 && bytesRead == chunkSize)
+                                {
+                                    rawMemoryData.AddRange(buffer);
+                                }
+                                else
+                                {
+                                    // Erişilemeyen kısımlar için padding
+                                    rawMemoryData.AddRange(new byte[chunkSize]);
+                                }
+                            }
+                            catch
+                            {
+                                // Hata durumunda da padding
+                                rawMemoryData.AddRange(new byte[chunkSize]);
+                            }
+
+                            remainingSize -= chunkSize;
+                            currentOffset += chunkSize;
+                        }
+                    }
+
+                    Console.WriteLine($"[SUCCESS] Memory64List: {descriptorData.Count} bytes descriptors, {rawMemoryData.Count / (1024 * 1024)} MB raw data");
+    
+                    // Debug: Array boyutlarını kontrol et
+                    try
+                    {
+                        var testDescriptorArray = descriptorData.ToArray();
+                        var testRawDataArray = rawMemoryData.ToArray();
+                        Console.WriteLine($"[DEBUG] Array dönüşümler başarılı: descriptor={testDescriptorArray.Length}, raw={testRawDataArray.Length}");
+    
+                        return (new MinidumpStream
+                        {
+                            StreamType = MINIDUMP_STREAM_TYPE_Memory64List,
+                            Data = testDescriptorArray
+                        }, testRawDataArray);
+                    }
+                    catch (Exception arrayEx)
+                    {
+                        Console.WriteLine($"[ERROR] Array dönüşüm hatası: {arrayEx.Message}");
+                        return (new MinidumpStream
+                        {
+                            StreamType = MINIDUMP_STREAM_TYPE_Memory64List,
+                            Data = new byte[0]
+                        }, new byte[0]);
+                    }
+                }
+                else
+                {
+                    // İkinci geçiş: sadece descriptor + BaseRva güncelle
+                    Console.WriteLine($"[SUCCESS] Memory64List (descriptor-only): {descriptorData.Count} bytes, BaseRva=0x{memoryDataBaseRva:X}");
+
+                    return (new MinidumpStream
+                    {
+                        StreamType = MINIDUMP_STREAM_TYPE_Memory64List,
+                        Data = descriptorData.ToArray()
+                    }, new byte[0]);
+                }
             }
             catch (Exception ex)
             {
