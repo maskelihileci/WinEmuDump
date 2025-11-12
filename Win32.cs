@@ -135,6 +135,10 @@ namespace WinEmuDump
         ///////////////// CONSTANTS /////////////////
         public const int MEM_COMMIT = 0x00001000;
         public const int PAGE_NOACCESS = 0x01;
+        public const int PAGE_READONLY = 0x02;
+        public const int PAGE_READWRITE = 0x04;
+        public const int PAGE_EXECUTE_READ = 0x20;
+        public const int PAGE_EXECUTE_READWRITE = 0x40;
         public const uint MemoryBasicInformation = 0;
         public const uint THREAD_QUERY_INFORMATION = 0x0040;
         public const uint THREAD_GET_CONTEXT = 0x0008;
@@ -631,15 +635,6 @@ namespace WinEmuDump
             // TOKEN struct would follow, but we skip for simplicity
         }
 
-        // MINIDUMP_JAVASCRIPT_DATA - JavaScript data stream
-        [StructLayout(LayoutKind.Sequential, Pack = 4)]
-        public struct MINIDUMP_JAVASCRIPT_DATA
-        {
-            public uint SizeOfStream;      // Size of entire stream
-            public uint ContextCount;      // Number of JavaScript contexts
-            // Context data would follow
-        }
-
         // MINIDUMP_IPT_TRACE_STREAM - Intel PT trace stream
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
         public struct MINIDUMP_IPT_TRACE_STREAM
@@ -731,7 +726,7 @@ namespace WinEmuDump
             public ulong ExceptionAddress;
             public uint NumberParameters;
             public uint __unusedAlignment;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 15)]
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 15)]  // FIXED: 15 elements (Microsoft standard)
             public ulong[] ExceptionInformation;
         }
 

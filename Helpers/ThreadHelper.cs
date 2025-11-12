@@ -180,8 +180,9 @@ public struct CLIENT_ID
 
 /// <summary>
 /// THREAD_STACK_INFORMATION yapısı - Thread stack bilgileri için
+/// Resmi Microsoft dokümantasyonuna göre x64 için doğru yapı
 /// </summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(LayoutKind.Sequential, Pack = 0)]
 public struct THREAD_STACK_INFORMATION
 {
     public IntPtr StackBase;
@@ -281,12 +282,13 @@ namespace WinEmuDump.Helpers
         {
             try
             {
-                // Stack base ve limit'i NtQueryInformationThread ile al
+                // 1. Önce NtQueryInformationThread(ThreadStackInformation) ile dene
                 THREAD_STACK_INFORMATION stackInfo = new THREAD_STACK_INFORMATION();
                 IntPtr buffer = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(THREAD_STACK_INFORMATION)));
+                uint ntStatus = 0;
                 try
                 {
-                    uint ntStatus = NativeApi.NtQueryInformationThread(
+                    ntStatus = NativeApi.NtQueryInformationThread(
                         threadHandle,
                         ThreadConstants.ThreadStackInformation,
                         buffer,
@@ -297,25 +299,145 @@ namespace WinEmuDump.Helpers
                     if (ntStatus == 0)
                     {
                         stackInfo = Marshal.PtrToStructure<THREAD_STACK_INFORMATION>(buffer);
+                        Console.WriteLine($"[DEBUG] THREAD_STACK_INFORMATION başarılı: StackBase=0x{stackInfo.StackBase:X}, StackLimit=0x{stackInfo.StackLimit:X}");
 
-                        // Stack boyutunu hesapla
-                        uint stackSize = (uint)(stackInfo.StackLimit.ToInt64() - stackInfo.StackBase.ToInt64());
-                        if (stackSize < 0) stackSize = (uint)Math.Abs(stackSize);
+                        // Stack boyutunu hesapla ve doğrula
+                        long stackBaseVal = stackInfo.StackBase.ToInt64();
+                        long stackLimitVal = stackInfo.StackLimit.ToInt64();
+                        long stackSizeVal = stackLimitVal - stackBaseVal;
 
-                        return (stackInfo.StackBase, stackSize);
+                        if (stackSizeVal < 0)
+                        {
+                            Console.WriteLine($"[WARNING] Negatif stack size hesaplandı: {stackSizeVal}, ters çeviriliyor");
+                            stackSizeVal = Math.Abs(stackSizeVal);
+                        }
+
+                        uint stackSize = (uint)stackSizeVal;
+
+                        // Mantıklı değer kontrolü
+                        if (stackBaseVal != 0 && stackSize > 0 && stackSize < 1024 * 1024 * 100) // 100MB'dan küçük
+                        {
+                            Console.WriteLine($"[SUCCESS] NtQueryInformationThread ile stack bilgisi alındı: Base=0x{stackBaseVal:X}, Size={stackSize}");
+                            return (stackInfo.StackBase, stackSize);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"[WARNING] Geçersiz stack değerleri: Base=0x{stackBaseVal:X}, Size={stackSize}");
+                        }
                     }
                     else
                     {
-                        return (IntPtr.Zero, 0);
+                        Console.WriteLine($"[WARNING] NtQueryInformationThread(ThreadStackInformation) başarısız: 0x{ntStatus:X}, TEB fallback kullanılıyor");
                     }
                 }
                 finally
                 {
                     Marshal.FreeHGlobal(buffer);
                 }
+
+                // 2. ThreadStackInformation başarısız olduysa, TEB'den oku
+                Console.WriteLine($"[DEBUG] TEB'den stack bilgileri alınıyor...");
+
+                // THREAD_BASIC_INFORMATION ile TEBBaseAddress al (zaten var)
+                THREAD_BASIC_INFORMATION threadBasicInfo = new THREAD_BASIC_INFORMATION();
+                IntPtr basicBuffer = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(THREAD_BASIC_INFORMATION)));
+                try
+                {
+                    ntStatus = NativeApi.NtQueryInformationThread(
+                        threadHandle,
+                        ThreadConstants.ThreadBasicInformation,
+                        basicBuffer,
+                        (uint)Marshal.SizeOf(typeof(THREAD_BASIC_INFORMATION)),
+                        out uint basicReturnLength
+                    );
+
+                    if (ntStatus != 0)
+                    {
+                        Console.WriteLine($"[WARNING] THREAD_BASIC_INFORMATION alınamadı: 0x{ntStatus:X}");
+                        return (IntPtr.Zero, 0);
+                    }
+
+                    threadBasicInfo = Marshal.PtrToStructure<THREAD_BASIC_INFORMATION>(basicBuffer);
+                    IntPtr tebBase = threadBasicInfo.TebBaseAddress;
+
+                    if (tebBase == IntPtr.Zero)
+                    {
+                        Console.WriteLine($"[WARNING] TEB Base Address 0");
+                        return (IntPtr.Zero, 0);
+                    }
+
+                    Console.WriteLine($"[DEBUG] TEB Base: 0x{tebBase:X}");
+
+                    // Windows x64 TEB yapısı (resmi Microsoft dokümantasyonu):
+                    // StackBase: TEB + 0x08 (x64)
+                    // StackLimit: TEB + 0x10 (x64)
+
+                    const int STACK_BASE_OFFSET = 0x08;
+                    const int STACK_LIMIT_OFFSET = 0x10;
+
+                    IntPtr stackBasePtr = IntPtr.Add(tebBase, STACK_BASE_OFFSET);
+                    IntPtr stackLimitPtr = IntPtr.Add(tebBase, STACK_LIMIT_OFFSET);
+
+                    // StackBase oku
+                    byte[] stackBaseBytes = new byte[IntPtr.Size];
+                    ntStatus = NativeApi.NtReadVirtualMemory(hProcess, stackBasePtr, stackBaseBytes, stackBaseBytes.Length, out IntPtr bytesRead1);
+                    if (ntStatus != 0)
+                    {
+                        Console.WriteLine($"[WARNING] TEB StackBase okunamadı: 0x{ntStatus:X}");
+                        return (IntPtr.Zero, 0);
+                    }
+
+                    // StackLimit oku
+                    byte[] stackLimitBytes = new byte[IntPtr.Size];
+                    ntStatus = NativeApi.NtReadVirtualMemory(hProcess, stackLimitPtr, stackLimitBytes, stackLimitBytes.Length, out IntPtr bytesRead2);
+                    if (ntStatus != 0)
+                    {
+                        Console.WriteLine($"[WARNING] TEB StackLimit okunamadı: 0x{ntStatus:X}");
+                        return (IntPtr.Zero, 0);
+                    }
+
+                    IntPtr stackBase = IntPtr.Size == 8 ?
+                        (IntPtr)BitConverter.ToInt64(stackBaseBytes, 0) :
+                        (IntPtr)BitConverter.ToInt32(stackBaseBytes, 0);
+
+                    IntPtr stackLimit = IntPtr.Size == 8 ?
+                        (IntPtr)BitConverter.ToInt64(stackLimitBytes, 0) :
+                        (IntPtr)BitConverter.ToInt32(stackLimitBytes, 0);
+
+                    Console.WriteLine($"[DEBUG] TEB'den okunan: StackBase=0x{stackBase:X}, StackLimit=0x{stackLimit:X}");
+
+                    // Stack boyutunu hesapla
+                    long stackBaseVal = stackBase.ToInt64();
+                    long stackLimitVal = stackLimit.ToInt64();
+                    long stackSizeVal = stackBaseVal - stackLimitVal; // Stack büyüdükçe azalır
+
+                    if (stackSizeVal < 0)
+                    {
+                        stackSizeVal = -stackSizeVal;
+                    }
+
+                    uint stackSize = (uint)stackSizeVal;
+
+                    // Mantıklı değer kontrolü
+                    if (stackBaseVal != 0 && stackLimitVal != 0 && stackSize > 0 && stackSize < 1024 * 1024 * 100)
+                    {
+                        Console.WriteLine($"[SUCCESS] TEB'den stack bilgisi alındı: Base=0x{stackBaseVal:X}, Size={stackSize}");
+                        return (stackBase, stackSize);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[WARNING] TEB'den geçersiz stack değerleri: Base=0x{stackBaseVal:X}, Limit=0x{stackLimitVal:X}, Size={stackSize}");
+                        return (IntPtr.Zero, 0);
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(basicBuffer);
+                }
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"[WARNING] GetThreadStackInfo exception: {ex.Message}");
                 return (IntPtr.Zero, 0);
             }
         }

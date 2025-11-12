@@ -350,14 +350,24 @@ namespace WinEmuDump
                             continue;
                         }
 
+                        // Priority bilgilerini al
+                        uint processPriorityClass = (uint)process.PriorityClass;
+                        uint threadPriority = (uint)thread.BasePriority;
+
+                        // HasValidStack kontrolü
+                        bool hasValidStack = (stackBase != IntPtr.Zero && stackSize > 0);
+
                         // Zaman bilgilerini güvenli şekilde almaya çalış
                         // ThreadCollector'da zaman bilgilerini toplamıyoruz, sadece temel bilgiler
                         MinidumpThreadInfo threadInfo = new MinidumpThreadInfo
                         {
                             ThreadId = (uint)thread.Id,
+                            PriorityClass = processPriorityClass,
+                            Priority = threadPriority,
                             TebAddress = (ulong)tebAddress.ToInt64(),
                             StackBase = (ulong)stackBase.ToInt64(),
                             StackSize = stackSize,
+                            HasValidStack = hasValidStack,
                             Context = context
                         };
 
@@ -379,6 +389,17 @@ namespace WinEmuDump
                 Console.WriteLine("[DEBUG] Process resume ediliyor...");
                 bool resumeResult = WinEmuDump.Helpers.ThreadHelper.ResumeProcess(hProcess);
                 Console.WriteLine($"[DEBUG] Resume result: {resumeResult}");
+
+                // Tüm stack'ler boş ise uyarı logla
+                int invalidStackCount = threadInfos.Count(t => !t.HasValidStack);
+                if (invalidStackCount == threadInfos.Count)
+                {
+                    Console.WriteLine($"[WARNING] Hiçbir thread için geçerli stack bilgisi alınamadı");
+                }
+                else if (invalidStackCount > 0)
+                {
+                    Console.WriteLine($"[WARNING] {invalidStackCount}/{threadInfos.Count} thread için stack bilgisi alınamadı");
+                }
 
                 Console.WriteLine($"[INFO] Thread toplama özeti: {successfulThreads} başarılı, {failedThreads} başarısız");
                 Console.WriteLine($"[INFO] {threadInfos.Count} thread gelişmiş bilgileri toplandı");
@@ -543,9 +564,6 @@ namespace WinEmuDump
                 // TokenStream - Security token bilgileri (boş liste)
                 streams.Add(CreateTokenStream(0));
 
-                // JavaScriptDataStream - JavaScript execution context (boş liste)
-                streams.Add(CreateJavaScriptDataStream(0));
-
                 // IptTraceStream - Intel Processor Trace (boş liste)
                 streams.Add(CreateIptTraceStream(0));
 
@@ -689,10 +707,13 @@ namespace WinEmuDump
                     }
                     else if (i == handleStreamIndex)
                     {
-                        // Handle stream için size düzeltmesi - sadece header kısmı
-                        HandleListStream handleHeader = StructHelper.StructToStruct<HandleListStream>(streams[i].Data.Take(Marshal.SizeOf(typeof(HandleListStream))).ToArray());
-                        streamSize = handleHeader.SizeOfHeader;
-                        Console.WriteLine($"[DEBUG] HandleList stream Size düzeltildi: 0x{streamSize:X} (gerçek data: 0x{streams[i].Data.Length:X})");
+                        // HandleDataStream: Directory.Size = sadece header + descriptors (string data RVA ile gösterilir ama stream size'ına dahil edilmez)
+                        // CreateHandleListStream içinde hesaplanan handleList'in handle sayısı ile
+                        var tempHandleList = handleList; // handleList kullan
+                        uint handleHeaderSize = (uint)Marshal.SizeOf(typeof(HandleListStream)); // 16 bytes
+                        uint handleDescriptorsSize = (uint)(tempHandleList.Count * Marshal.SizeOf(typeof(Handle))); // 32 bytes per handle
+                        streamSize = handleHeaderSize + handleDescriptorsSize;
+                        Console.WriteLine($"[DEBUG] HandleList stream Size düzeltildi: 0x{streamSize:X} (header+descriptors, string data hariç)");
                     }
                     else if (i == moduleStreamIndex)
                     {
@@ -703,22 +724,48 @@ namespace WinEmuDump
                     }
                     else if (i == threadListStreamIndex)
                     {
-                        // ThreadList stream için size düzeltmesi - header + thread structs
-                        MINIDUMP_THREAD_LIST threadHeader = StructHelper.StructToStruct<MINIDUMP_THREAD_LIST>(streams[i].Data.Take(Marshal.SizeOf(typeof(MINIDUMP_THREAD_LIST))).ToArray());
-                        streamSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_THREAD_LIST)) + (threadHeader.NumberOfThreads * (uint)Marshal.SizeOf(typeof(MINIDUMP_THREAD)));
-                        Console.WriteLine($"[DEBUG] ThreadList stream Size düzeltildi: 0x{streamSize:X} (gerçek data: 0x{streams[i].Data.Length:X})");
+                        // ThreadList: Directory.Size = sadece header + threads (CONTEXT data RVA ile gösterilir ama stream size'ına dahil edilmez)
+                        uint threadListHeaderSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_THREAD_LIST)); // 4 bytes
+                        uint threadStructsSize = (uint)(threadList.Count * Marshal.SizeOf(typeof(MINIDUMP_THREAD))); // 48 bytes per thread
+                        streamSize = threadListHeaderSize + threadStructsSize;
+                        Console.WriteLine($"[DEBUG] ThreadList stream Size düzeltildi: 0x{streamSize:X} (header+threads, CONTEXT data hariç)");
+                    }
+                    else if (threadNamesStreamIndex >= 0 && i == threadNamesStreamIndex)
+                    {
+                        // ThreadNamesStream: Directory.Size = sadece header + ThreadName entries (string data RVA ile gösterilir ama stream size'ına dahil edilmez)
+                        uint threadNamesHeaderSize = (uint)Marshal.SizeOf(typeof(ThreadNamesStream)); // 4 bytes
+                        uint threadNameEntriesSize = (uint)(threadList.Count * Marshal.SizeOf(typeof(ThreadName))); // 8 bytes per thread
+                        streamSize = threadNamesHeaderSize + threadNameEntriesSize;
+                        Console.WriteLine($"[DEBUG] ThreadNamesStream Size düzeltildi: 0x{streamSize:X} (header+entries, string data hariç)");
                     }
                     else if (i == exceptionStreamIndex)
                     {
-                        // Exception stream için size düzeltmesi - sadece struct boyutu
+                        // Exception: Directory.Size = MINIDUMP_EXCEPTION_STREAM boyutu
+                        // MINIDUMP_EXCEPTION_STREAM = ThreadId(4) + alignment(4) + MINIDUMP_EXCEPTION(152) + ThreadContext(8) = 168 bytes (0xa8)
+                        // MINIDUMP_EXCEPTION içindeki ExceptionInformation[15] array düzeltildi (Win32.cs'de)
                         streamSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_EXCEPTION_STREAM));
-                        Console.WriteLine($"[DEBUG] Exception stream Size düzeltildi: 0x{streamSize:X} (gerçek data: 0x{streams[i].Data.Length:X})");
+                        Console.WriteLine($"[DEBUG] Exception stream Size: 0x{streamSize:X} (MINIDUMP_EXCEPTION_STREAM boyutu, CONTEXT RVA ile)");
                     }
                     else if (memory64ListStreamIndex >= 0 && i == memory64ListStreamIndex)
                     {
-                        // Memory64List için size düzeltmesi - sadece descriptor kısmı
-                        streamSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_MEMORY64_LIST)) + (uint)(streams[i].Data.Length - Marshal.SizeOf(typeof(MINIDUMP_MEMORY64_LIST)));
-                        Console.WriteLine($"[DEBUG] Memory64List stream Size düzeltildi: 0x{streamSize:X} (gerçek data: 0x{streams[i].Data.Length:X})");
+                        // Memory64List: Directory.Size = descriptor kısmı (streams[i].Data.Length zaten sadece header+descriptors)
+                        streamSize = (uint)streams[i].Data.Length;
+                        Console.WriteLine($"[DEBUG] Memory64List stream Size = descriptor boyutu: 0x{streamSize:X}");
+                    }
+                    else if (streams[i].StreamType == MINIDUMP_STREAM_TYPE_UnloadedModuleList)
+                    {
+                        // UnloadedModuleList: Directory.Size = sadece header + entries (string data RVA ile gösterilir ama stream size'ına dahil edilmez)
+                        // MINIDUMP_UNLOADED_MODULE_LIST + MINIDUMP_UNLOADED_MODULE
+                        streamSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_UNLOADED_MODULE_LIST)) + (uint)Marshal.SizeOf(typeof(MINIDUMP_UNLOADED_MODULE));
+                        Console.WriteLine($"[DEBUG] UnloadedModuleList stream Size düzeltildi: 0x{streamSize:X} (header+entry, string data hariç)");
+                    }
+                    else if (streams[i].StreamType == MINIDUMP_STREAM_TYPE_Token)
+                    {
+                        // TokenStream: Directory.Size = sadece header (elementler RVA ile gösterilir ama stream size'ına dahil edilmez)
+                        // MINIDUMP_TOKEN_INFO_LIST (ElementHeaderSize = 0x48 minimum)
+                        uint tokenHeaderSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_TOKEN_INFO_LIST));
+                        streamSize = tokenHeaderSize;
+                        Console.WriteLine($"[DEBUG] TokenStream Size düzeltildi: 0x{streamSize:X} (sadece header, element data hariç)");
                     }
 
                     MinidumpStreamDirectoryEntry entry = new MinidumpStreamDirectoryEntry
@@ -892,16 +939,17 @@ namespace WinEmuDump
                 {
                     ThreadId = threadInfo.ThreadId,
                     SuspendCount = 1, // Suspended durumda
-                    PriorityClass = 0, // Bilinmiyor
-                    Priority = 0, // Bilinmiyor
+                    PriorityClass = threadInfo.PriorityClass,
+                    Priority = threadInfo.Priority,
                     Teb = threadInfo.TebAddress,
                     Stack = new MINIDUMP_MEMORY_DESCRIPTOR
                     {
-                        StartOfMemoryRange = threadInfo.StackBase,
+                        StartOfMemoryRange = threadInfo.HasValidStack ? threadInfo.StackBase : 0,
                         Memory = new MINIDUMP_LOCATION_DESCRIPTOR
                         {
-                            DataSize = threadInfo.StackSize,
-                            Rva = 0 // Memory64List'te olacak
+                            DataSize = threadInfo.HasValidStack ? threadInfo.StackSize : 0,
+                            // Memory64List ile uyumlu - stack verisi orada bulunacak
+                            Rva = 0
                         }
                     },
                     ThreadContext = new MINIDUMP_LOCATION_DESCRIPTOR
@@ -1259,6 +1307,7 @@ namespace WinEmuDump
                         {
                             byte[] testBuffer = new byte[4096];
                             uint ntStatus = NativeApi.NtReadVirtualMemory(hProcess, testAddress, testBuffer, 4096, out IntPtr testBytesReadPtr);
+                            int testBytesRead = testBytesReadPtr.ToInt32();
 
                             if (ntStatus != 0)
                             {
@@ -1637,9 +1686,9 @@ namespace WinEmuDump
                 ExceptionFlags = 0,
                 ExceptionRecord = 0,
                 ExceptionAddress = 0x0000000000000000, // Bilinmiyor
-                NumberParameters = 0,
+                NumberParameters = 2, // Windbg minimum beklentisi için 2 parametre
                 __unusedAlignment = 0,
-                ExceptionInformation = new ulong[15] // Boş parametreler
+                ExceptionInformation = new ulong[15] // 15 elemanlı array (tam boyut)
             };
 
             // Exception RVA hesapla (CONTEXT için)
@@ -2190,15 +2239,35 @@ namespace WinEmuDump
         {
             Console.WriteLine($"[DEBUG] ThreadNamesStream oluşturuluyor, thread sayısı: {threadList.Count}");
 
-            // ThreadNamesStream header boyutu
+            // Hiç thread yoksa boş ve tutarlı bir stream döndür
+            if (threadList == null || threadList.Count == 0)
+            {
+                Console.WriteLine("[DEBUG] ThreadNamesStream: thread listesi boş, NumberOfThreadNames=0, Size=4");
+                ThreadNamesStream emptyHeader = new ThreadNamesStream
+                {
+                    NumberOfThreadNames = 0
+                };
+                List<byte> emptyData = new List<byte>();
+                emptyData.AddRange(StructHelper.StructToByteArray(emptyHeader));
+
+                return new MinidumpStream
+                {
+                    StreamType = MINIDUMP_STREAM_TYPE_ThreadNames,
+                    Data = emptyData.ToArray()
+                };
+            }
+
+            // ThreadNamesStream header boyutu (NumberOfThreadNames)
             uint headerSize = (uint)Marshal.SizeOf(typeof(ThreadNamesStream)); // 4 bytes
+
+            // ThreadName entries (ThreadId + ThreadNameRva)
             uint threadNamesAreaSize = (uint)(threadList.Count * Marshal.SizeOf(typeof(ThreadName))); // 8 bytes per thread
 
             Console.WriteLine($"[DEBUG] Header size: {headerSize} bytes, ThreadName area: {threadNamesAreaSize} bytes");
 
             List<byte> threadNamesData = new List<byte>();
 
-            // ThreadNamesStream header
+            // 1) Header yaz
             ThreadNamesStream threadNamesStream = new ThreadNamesStream
             {
                 NumberOfThreadNames = (uint)threadList.Count
@@ -2206,41 +2275,47 @@ namespace WinEmuDump
             byte[] headerBytes = StructHelper.StructToByteArray(threadNamesStream);
             threadNamesData.AddRange(headerBytes);
 
-            // ThreadName struct'larını önce oluştur (string data'sı olmadan)
+            // 2) ThreadName listesi ve string verisi için hazırlık
             List<ThreadName> threadNames = new List<ThreadName>();
             List<byte> stringData = new List<byte>();
 
-            // Önce tüm string'leri hazırla ve boyutlarını hesapla
+            // Önce tüm isimleri üret ve gerçek MINIDUMP_STRING.Length değerlerini (UTF-16 byte sayısı, null hariç) hesapla
             List<string> threadNamesList = new List<string>();
             List<uint> nameLengths = new List<uint>();
 
             foreach (var threadInfo in threadList)
             {
-                // Anlamlı thread name oluştur (hybrid yaklaşım) - hProcess ve processId parametresi eklendi
                 string threadName = GetSmartThreadName(threadInfo, threadList, hProcess, processId);
+                if (string.IsNullOrEmpty(threadName))
+                {
+                    threadName = $"Thread_{threadInfo.ThreadId}";
+                }
+
                 threadNamesList.Add(threadName);
 
-                // Thread name string verisi (length + Unicode string + null terminator)
+                // MINIDUMP_STRING.Length = UTF-16 karakterlerin byte sayısı (null terminator hariç)
                 byte[] nameBytes = System.Text.Encoding.Unicode.GetBytes(threadName);
-                uint nameLength = (uint)(nameBytes.Length + 2); // +2 for null terminator
+                uint nameLength = (uint)nameBytes.Length;
                 nameLengths.Add(nameLength);
             }
 
-            // String data başlangıç offset'i hesapla (header + thread name structs)
+            // 3) String data'nın stream içindeki başlangıç offset'ini hesapla:
+            // [ThreadNamesStream header][ThreadName entries][MINIDUMP_STRING blokları...]
             uint currentStringOffset = headerSize + threadNamesAreaSize;
-            Console.WriteLine($"[DEBUG] String data başlangıç offset'i: 0x{currentStringOffset:X}");
+            Console.WriteLine($"[DEBUG] String data başlangıç offset'i (stream içi): 0x{currentStringOffset:X}");
 
-            // Şimdi ThreadName struct'larını ve string data'sını oluştur
+            // 4) ThreadName struct'larını ve onun işaret ettiği MINIDUMP_STRING bloklarını oluştur
             for (int i = 0; i < threadList.Count; i++)
             {
                 var threadInfo = threadList[i];
                 string threadName = threadNamesList[i];
                 uint nameLength = nameLengths[i];
 
-                // RVA hesapla - streamBaseRva + string'in stream içindeki offset'i
+                // Bu thread'in string'i için RVA:
+                // streamBaseRva (directory.Location.Rva) + string bloğunun stream içindeki offset'i
                 uint threadNameRva = streamBaseRva + currentStringOffset;
 
-                // ThreadName struct oluştur ve kaydet
+                // ThreadName entry
                 ThreadName threadNameStruct = new ThreadName
                 {
                     ThreadId = threadInfo.ThreadId,
@@ -2248,33 +2323,34 @@ namespace WinEmuDump
                 };
                 threadNames.Add(threadNameStruct);
 
-                // Thread name string verisi ekle (MINIDUMP_STRING format: Length + Unicode string + null terminator)
+                // MINIDUMP_STRING:
+                // - 4 byte Length (UTF-16 bytes, null hariç)
+                // - UTF-16 string
+                // NOT: Null terminator dahil DEĞİL (Windbg uyumu için)
                 byte[] nameBytes = System.Text.Encoding.Unicode.GetBytes(threadName);
-                stringData.AddRange(BitConverter.GetBytes(nameLength)); // Length field (4 bytes)
-                stringData.AddRange(nameBytes);                         // Unicode string
-                stringData.AddRange(new byte[2]);                       // Null terminator
+                stringData.AddRange(BitConverter.GetBytes(nameLength));
+                stringData.AddRange(nameBytes);
 
-                Console.WriteLine($"[DEBUG] Thread {threadInfo.ThreadId} name: '{threadName}' @ RVA=0x{threadNameRva:X}, StringOffset=0x{currentStringOffset:X}, Length=0x{nameLength:X}");
+                Console.WriteLine($"[DEBUG] Thread {threadInfo.ThreadId} name: '{threadName}' @ RVA=0x{threadNameRva:X}, StringOffset=0x{currentStringOffset:X}, Length(bytes)=0x{nameLength:X}");
 
-                // Offset güncelle - Length field (4) + string data (nameLength)
+                // Sonraki string için offseti ilerlet (null terminator olmadan)
                 currentStringOffset += 4 + nameLength;
             }
 
-            // ThreadName struct'larını ekle
+            // 5) ThreadName struct'larını header'dan hemen sonra yaz
             foreach (var threadNameStruct in threadNames)
             {
                 byte[] threadNameBytes = StructHelper.StructToByteArray(threadNameStruct);
                 threadNamesData.AddRange(threadNameBytes);
             }
 
-            // String verilerini ekle
+            // 6) String verilerini ekle
             threadNamesData.AddRange(stringData);
 
-            Console.WriteLine($"[DEBUG] ThreadNamesStream boyutu: {threadNamesData.Count} bytes");
+            Console.WriteLine($"[DEBUG] ThreadNamesStream boyutu (Directory.Size olması gereken): {threadNamesData.Count} bytes");
             Console.WriteLine($"[DEBUG] - Header: {headerSize} bytes");
-            Console.WriteLine($"[DEBUG] - ThreadNames: {threadNamesAreaSize} bytes");
+            Console.WriteLine($"[DEBUG] - ThreadName entries: {threadNamesAreaSize} bytes");
             Console.WriteLine($"[DEBUG] - String Data: {stringData.Count} bytes");
-            Console.WriteLine($"[DEBUG] - Total: {threadNamesData.Count} bytes");
 
             return new MinidumpStream
             {
@@ -2293,38 +2369,37 @@ namespace WinEmuDump
 
             try
             {
-                // Sadece 1 örnek unloaded modül ekle (test için) 
+                // Sadece 1 örnek unloaded modül ekle (test için) - RVA hesapla ama string data ekleme
                 string moduleName = "Unsupported";
 
-                // ModuleName RVA hesapla - MinidumpExplorer RVA'ları dosya başından itibaren hesaplanır
+                // ModuleName RVA hesapla - gerçek RVA ver ama string data ekleme
                 uint moduleNameRva = streamBaseRva + (uint)Marshal.SizeOf(typeof(MINIDUMP_UNLOADED_MODULE_LIST)) +
-                    (uint)Marshal.SizeOf(typeof(MINIDUMP_UNLOADED_MODULE)); // streamBaseRva + header + module struct
+                    (uint)Marshal.SizeOf(typeof(MINIDUMP_UNLOADED_MODULE));
 
-                // MINIDUMP_STRING formatı: Length (byte sayısı, 4 bytes) + Unicode string + null terminator
+                // MINIDUMP_STRING formatı: Length (byte sayısı, 4 bytes) + Unicode string (+ null terminator yok - Windbg uyumu için)
                 uint moduleNameLength = (uint)moduleName.Length * 2; // BYTE sayısı (Unicode = 2 bytes per char)
                 byte[] moduleNameBytes = System.Text.Encoding.Unicode.GetBytes(moduleName);
 
-                Console.WriteLine($"[DEBUG] ModuleName: '{moduleName}' (Length: {moduleNameLength} bytes, Chars: {moduleName.Length}, Bytes: {moduleNameBytes.Length})");
+                Console.WriteLine($"[DEBUG] ModuleName: '{moduleName}' (Length(bytes): {moduleNameLength}, Bytes: {moduleNameBytes.Length})");
 
-                // String verisini ekle
+                // String verisini ekle (Windbg uyumu için null terminator olmadan)
                 stringData.AddRange(BitConverter.GetBytes(moduleNameLength));
                 stringData.AddRange(moduleNameBytes);
-                stringData.AddRange(new byte[2]); // Null terminator
 
-                // MINIDUMP_UNLOADED_MODULE oluştur
+                // MINIDUMP_UNLOADED_MODULE oluştur - RVA hesaplandı
                 MINIDUMP_UNLOADED_MODULE unloadedModule = new MINIDUMP_UNLOADED_MODULE
                 {
                     BaseOfImage = 0x0000000001000000UL, // Örnek base address
                     SizeOfImage = 0x00010000, // 64KB örnek boyut
                     CheckSum = 0x12345678, // Örnek checksum
                     TimeDateStamp = 0x5A4B3C2D, // Örnek timestamp
-                    ModuleNameRva = moduleNameRva
+                    ModuleNameRva = moduleNameRva // RVA hesaplandı
                 };
 
                 unloadedModules.Add(unloadedModule);
 
-                Console.WriteLine($"[DEBUG] Örnek unloaded modül eklendi: '{moduleName}' @ RVA=0x{moduleNameRva:X}");
-                Console.WriteLine($"[INFO] UnloadedModuleListStream - 1 örnek unloaded modül eklendi (test için)");
+                Console.WriteLine($"[DEBUG] Örnek unloaded modül eklendi: '{moduleName}' @ RVA=0x{moduleNameRva:X} (string data yok - Windbg uyumu)");
+                Console.WriteLine($"[INFO] UnloadedModuleListStream - 1 örnek unloaded modül eklendi (test için, RVA hesaplandı)");
             }
             catch (Exception ex)
             {
@@ -2344,17 +2419,15 @@ namespace WinEmuDump
             byte[] headerBytes = StructHelper.StructToByteArray(unloadedModuleList);
             unloadedModuleData.AddRange(headerBytes);
 
-            // Unloaded module struct'larını ekle
             foreach (var module in unloadedModules)
             {
-                byte[] moduleBytes = StructHelper.StructToByteArray(module);
-                unloadedModuleData.AddRange(moduleBytes);
+                unloadedModuleData.AddRange(StructHelper.StructToByteArray(module));
             }
 
-            // String verilerini ekle
+            // String data ekleme - RVA=0 olduğu için
             unloadedModuleData.AddRange(stringData);
 
-            Console.WriteLine($"[DEBUG] UnloadedModuleListStream boyutu: {unloadedModuleData.Count} bytes ({unloadedModules.Count} unloaded module)");
+            Console.WriteLine($"[DEBUG] UnloadedModuleListStream final size: {unloadedModuleData.Count} bytes (Windbg 0x24=36 bekliyor)");
 
             return new MinidumpStream
             {
@@ -2778,7 +2851,11 @@ namespace WinEmuDump
         }
 
         /// <summary>
-        /// HandleOperationListStream oluşturur (Handle operation list) - GERÇEK VERİ İLE
+        /// HandleOperationListStream oluşturur (Handle operation list)
+        /// Windbg beklentisine göre minimum geçerli header üretir.
+        /// - SizeOfHeader: MINIDUMP_HANDLE_OPERATION_LIST boyutu
+        /// - SizeOfEntry:  0x120 (288) (boş olsa bile Windbg için makul minimum)
+        /// - NumberOfEntries: 0 (şimdilik ETW implementasyonu yok)
         /// </summary>
         private static MinidumpStream CreateHandleOperationListStream(uint streamBaseRva = 0)
         {
@@ -2788,34 +2865,35 @@ namespace WinEmuDump
 
             try
             {
-                // Handle operation listesi oldukça karmaşık bir özellik
-                // Event Tracing for Windows (ETW) kullanarak handle operasyonlarını yakala
-                // Bu çok düşük seviyeli bir işlem ve özel driver gerektirebilir
-
-                // Alternatif: NtQuerySystemInformation ile SystemHandleInformationEx kullan
-                // Bu da çok büyük veri döndürür ve parse edilmesi zordur
-
-                // Şimdilik boş liste ile devam et - bu özellik çok özel kullanım senaryoları için
-                Console.WriteLine($"[INFO] HandleOperationListStream - ETW tabanlı implementasyon gerekli, şimdilik boş liste");
+                // Şu anda ETW tabanlı gerçek handle operation toplama implementasyonu yok.
+                // Ancak Windbg, bu stream mevcutsa en azından:
+                // - Geçerli bir header
+                // - SizeOfEntry >= 0x120
+                // - Tutarlı NumberOfEntries
+                // bekliyor.
+                //
+                // Bu nedenle boş ama uyumlu bir header oluşturuyoruz.
+                Console.WriteLine($"[INFO] HandleOperationListStream - ETW verisi yok, ancak Windbg uyumlu boş header oluşturuluyor");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[WARNING] HandleOperationListStream oluşturulurken hata: {ex.Message}");
+                Console.WriteLine($"[WARNING] HandleOperationListStream oluşturulurken hata: {ex.Message}, yine de geçerli boş header yazılacak");
             }
 
-            // HandleOperationListStream header - boş liste (ETW implementasyonu çok karmaşık)
             MINIDUMP_HANDLE_OPERATION_LIST handleOperationList = new MINIDUMP_HANDLE_OPERATION_LIST
             {
                 SizeOfHeader = (uint)Marshal.SizeOf(typeof(MINIDUMP_HANDLE_OPERATION_LIST)),
-                SizeOfEntry = 0, // Bilinmiyor - handle operation struct boyutu
-                NumberOfEntries = 0, // Şimdilik boş
+                // Windbg hata vermesin diye minimum 0x120 kullan (plan: 288 bytes)
+                SizeOfEntry = 0x120,
+                NumberOfEntries = 0,
                 Reserved = 0
             };
+
             byte[] headerBytes = StructHelper.StructToByteArray(handleOperationList);
             handleOperationData.AddRange(headerBytes);
 
-            Console.WriteLine($"[DEBUG] HandleOperationListStream boyutu: {handleOperationData.Count} bytes (boş liste - ETW gerekli)");
-            Console.WriteLine($"[DEBUG] SizeOfHeader: {handleOperationList.SizeOfHeader}, SizeOfEntry: {handleOperationList.SizeOfEntry}");
+            Console.WriteLine($"[DEBUG] HandleOperationListStream boyutu: {handleOperationData.Count} bytes (sadece header)");
+            Console.WriteLine($"[DEBUG] SizeOfHeader: {handleOperationList.SizeOfHeader}, SizeOfEntry: {handleOperationList.SizeOfEntry}, NumberOfEntries: {handleOperationList.NumberOfEntries}");
 
             return new MinidumpStream
             {
@@ -2825,121 +2903,56 @@ namespace WinEmuDump
         }
 
         /// <summary>
-        /// TokenStream oluşturur (Security token bilgisi) - TEMEL VERİ İLE
+        /// TokenStream oluşturur (Security token bilgisi).
+        /// Şu anki projedeki MINIDUMP_TOKEN_INFO_LIST / MINIDUMP_TOKEN_INFO tanımları
+        /// resmi dbghelp MINIDUMP şemasının kısmi ve uyumsuz bir versiyonudur (ElementHeaderSize=12 vb.).
+        /// Bu yüzden Windbg tarafında "element size below minimum" hatalarına yol açmamak için
+        /// burada bilinçli olarak "boş ama geçerli" bir header yazıyoruz:
+        ///
+        /// - TokenListEntries = 0 (hiç kayıt yok)
+        /// - TokenListSize   = sizeof(MINIDUMP_TOKEN_INFO_LIST)
+        /// - ListHeaderSize  = sizeof(MINIDUMP_TOKEN_INFO_LIST)
+        /// - ElementHeaderSize = 0x48 (Windbg minimum beklentisi - TOKEN yapısının gerçek boyutu)
+        ///
+        /// Böylece:
+        /// - WinDbg/dbghelp, TokenInformationStream'i mevcut ama boş bir stream olarak kabul eder.
+        /// - Yanlış boyutlu/minimal MINIDUMP_TOKEN_INFO elemanları nedeniyle parser hatası oluşmaz.
+        ///
+        /// Gerçek token detayları ileride, resmi yapılar birebir eklendiğinde güvenle doldurulabilir.
         /// </summary>
         private static MinidumpStream CreateTokenStream(uint streamBaseRva = 0)
         {
-            Console.WriteLine($"[DEBUG] TokenStream oluşturuluyor");
+            Console.WriteLine("[DEBUG] TokenStream oluşturuluyor - boş ama geçerli header yazılacak (uyumluluk modu)");
 
             List<byte> tokenData = new List<byte>();
-            List<MINIDUMP_TOKEN_INFO> tokenInfos = new List<MINIDUMP_TOKEN_INFO>();
 
-            try
-            {
-                // Process token bilgilerini almak için OpenProcessToken kullan
-                // Bu işlem için SE_DEBUG_NAME privilege gerekli olabilir
+            // MINIDUMP_TOKEN_INFO_LIST header için doğru boyutu al
+            uint headerSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_TOKEN_INFO_LIST));
 
-                // Temel token bilgilerini almaya çalış
-                IntPtr processToken = IntPtr.Zero;
-                uint ntStatus = NativeApi.NtOpenProcessToken(IntPtr.Zero, AccessRights.TOKEN_QUERY, ref processToken); // Current process token
-
-                if (ntStatus == 0 && processToken != IntPtr.Zero)
-                {
-                    try
-                    {
-                        // Token bilgilerini al
-                        MINIDUMP_TOKEN_INFO tokenInfo = new MINIDUMP_TOKEN_INFO
-                        {
-                            TokenSize = 0, // Token struct boyutu bilinmiyor
-                            TokenId = 0,   // Token ID
-                            TokenHandle = (uint)processToken.ToInt64()
-                        };
-                        tokenInfos.Add(tokenInfo);
-
-                        Console.WriteLine($"[INFO] Process token bilgisi alındı");
-                    }
-                    finally
-                    {
-                        NativeApi.NtClose(processToken);
-                    }
-                }
-                else
-                {
-                    Console.WriteLine($"[WARNING] Process token açılamadı: NTSTATUS=0x{ntStatus:X}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[WARNING] TokenStream oluşturulurken hata: {ex.Message}");
-            }
-
-            // TokenStream header
+            // Tüm alanlar tutarlı şekilde ayarlanır:
             MINIDUMP_TOKEN_INFO_LIST tokenList = new MINIDUMP_TOKEN_INFO_LIST
             {
-                TokenListSize = (uint)(Marshal.SizeOf(typeof(MINIDUMP_TOKEN_INFO_LIST)) + (tokenInfos.Count * Marshal.SizeOf(typeof(MINIDUMP_TOKEN_INFO)))),
-                TokenListEntries = (uint)tokenInfos.Count,
-                ListHeaderSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_TOKEN_INFO_LIST)),
-                ElementHeaderSize = (uint)Marshal.SizeOf(typeof(MINIDUMP_TOKEN_INFO))
+                TokenListSize = headerSize,   // Sadece header
+                TokenListEntries = 0,         // Entry yok
+                ListHeaderSize = headerSize,  // Header boyutu
+                ElementHeaderSize = 0x48      // Windbg minimum beklentisi (TOKEN yapısının gerçek boyutu)
             };
+
+            // Header'ı yaz
             byte[] headerBytes = StructHelper.StructToByteArray(tokenList);
             tokenData.AddRange(headerBytes);
 
-            // Token entries
-            foreach (var tokenInfo in tokenInfos)
-            {
-                byte[] tokenBytes = StructHelper.StructToByteArray(tokenInfo);
-                tokenData.AddRange(tokenBytes);
-            }
-
-            Console.WriteLine($"[DEBUG] TokenStream boyutu: {tokenData.Count} bytes ({tokenInfos.Count} token)");
+            Console.WriteLine("[DEBUG] TokenStream özet (uyumlu/boş):");
+            Console.WriteLine($"  - TokenListSize:      {tokenList.TokenListSize}");
+            Console.WriteLine($"  - TokenListEntries:   {tokenList.TokenListEntries}");
+            Console.WriteLine($"  - ListHeaderSize:     {tokenList.ListHeaderSize}");
+            Console.WriteLine($"  - ElementHeaderSize:  0x{tokenList.ElementHeaderSize:X} (Windbg minimum beklentisi)");
+            Console.WriteLine($"  - Toplam stream boyutu: {tokenData.Count} bytes");
 
             return new MinidumpStream
             {
                 StreamType = MINIDUMP_STREAM_TYPE_Token,
                 Data = tokenData.ToArray()
-            };
-        }
-
-        /// <summary>
-        /// JavaScriptDataStream oluşturur (JavaScript execution context) - TEMEL VERİ İLE
-        /// </summary>
-        private static MinidumpStream CreateJavaScriptDataStream(uint streamBaseRva = 0)
-        {
-            Console.WriteLine($"[DEBUG] JavaScriptDataStream oluşturuluyor");
-
-            List<byte> jsData = new List<byte>();
-
-            // JavaScript execution context tespiti için process listesinde
-            // cscript.exe, node.exe, chrome.exe gibi JS engine'leri ara
-            uint contextCount = 0;
-
-            try
-            {
-                // Sistem process'lerini tara
-                // Bu çok basit bir yaklaşım, gerçek implementasyon için
-                // process'lerin içindeki V8/Chakra VM state'ini analiz etmek gerekir
-                Console.WriteLine($"[INFO] JavaScript execution context taraması - şimdilik boş (V8/Chakra VM analizi gerekli)");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[WARNING] JavaScriptDataStream oluşturulurken hata: {ex.Message}");
-            }
-
-            // JavaScriptDataStream header
-            MINIDUMP_JAVASCRIPT_DATA jsStream = new MINIDUMP_JAVASCRIPT_DATA
-            {
-                SizeOfStream = (uint)Marshal.SizeOf(typeof(MINIDUMP_JAVASCRIPT_DATA)),
-                ContextCount = contextCount // Bulunan context sayısı
-            };
-            byte[] headerBytes = StructHelper.StructToByteArray(jsStream);
-            jsData.AddRange(headerBytes);
-
-            Console.WriteLine($"[DEBUG] JavaScriptDataStream boyutu: {jsData.Count} bytes ({contextCount} context)");
-
-            return new MinidumpStream
-            {
-                StreamType = MINIDUMP_STREAM_TYPE_JavaScriptData,
-                Data = jsData.ToArray()
             };
         }
 
@@ -3091,6 +3104,51 @@ namespace WinEmuDump
             {
                 Console.WriteLine("[WARNING] ModuleList stream eksik!");
                 allValid = false;
+            }
+
+            // ThreadListStream için özel stack kontrolü
+            var threadListStream = streams.FirstOrDefault(s => s.StreamType == MINIDUMP_STREAM_TYPE_ThreadList);
+            if (threadListStream.Data != null && threadListStream.Data.Length > 0)
+            {
+                // Thread sayısını oku (İlk 4 byte)
+                uint threadCount = BitConverter.ToUInt32(threadListStream.Data, 0);
+                Console.WriteLine($"[INFO] ThreadListStream doğrulanıyor: {threadCount} thread");
+
+                // Her thread için stack kontrolü
+                int invalidStackThreads = 0;
+                for (int i = 0; i < threadCount; i++)
+                {
+                    // MINIDUMP_THREAD offset hesapla
+                    int threadOffset = 4 + (i * Marshal.SizeOf(typeof(MINIDUMP_THREAD)));
+                    if (threadOffset + Marshal.SizeOf(typeof(MINIDUMP_THREAD)) <= threadListStream.Data.Length)
+                    {
+                        // Stack.StartOfMemoryRange ve Stack.Memory.DataSize kontrolü
+                        // MINIDUMP_THREAD yapısında: ThreadId(4) + SuspendCount(4) + PriorityClass(4) + Priority(4) + Teb(8) + Stack(MINIDUMP_MEMORY_DESCRIPTOR)
+                        // Stack offset: 4+4+4+4+8 = 24 byte'dan sonra
+                        int stackOffset = threadOffset + 24;
+
+                        ulong startOfMemoryRange = BitConverter.ToUInt64(threadListStream.Data, stackOffset);
+                        uint dataSize = BitConverter.ToUInt32(threadListStream.Data, stackOffset + 8);
+
+                        if (startOfMemoryRange == 0 || dataSize == 0)
+                        {
+                            invalidStackThreads++;
+                        }
+                    }
+                }
+
+                if (invalidStackThreads == threadCount)
+                {
+                    Console.WriteLine($"[WARNING] ThreadListStream: Hiçbir thread için geçerli stack aralığı yok");
+                }
+                else if (invalidStackThreads > 0)
+                {
+                    Console.WriteLine($"[WARNING] ThreadListStream: {invalidStackThreads}/{threadCount} thread için stack aralığı geçersiz");
+                }
+                else
+                {
+                    Console.WriteLine($"[SUCCESS] ThreadListStream: Tüm thread'ler için geçerli stack bilgileri mevcut");
+                }
             }
 
             // Stream boyutlarının mantıklı olduğunu kontrol et

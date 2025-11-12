@@ -39,9 +39,12 @@ public struct TOKEN_PRIVILEGES
 internal struct MinidumpThreadInfo
 {
     public uint ThreadId;
+    public uint PriorityClass;
+    public uint Priority;
     public ulong TebAddress;
     public ulong StackBase;
     public uint StackSize;
+    public bool HasValidStack;
     public CONTEXT Context;
 }
 
@@ -253,9 +256,12 @@ namespace WinEmuDump
                             threadList.Add(new MinidumpThreadInfo
                             {
                                 ThreadId = oldThread.ThreadId,
+                                PriorityClass = 0,
+                                Priority = 0,
                                 TebAddress = 0, // Bilinmiyor
                                 StackBase = 0,  // Bilinmiyor
                                 StackSize = 0,  // Bilinmiyor
+                                HasValidStack = false,
                                 Context = new CONTEXT() // Boş context
                             });
                         }
