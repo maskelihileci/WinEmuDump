@@ -61,5 +61,18 @@ namespace WinEmuDump
 
         [DllImport("ntdll.dll")]
         public static extern uint NtResumeProcess(IntPtr ProcessHandle);
+
+        [DllImport("ntdll.dll")]
+        public static extern uint NtQueryEvent(IntPtr EventHandle, uint EventInformationClass, IntPtr EventInformation, uint EventInformationLength, out uint ReturnLength);
+
+        [DllImport("ntdll.dll", SetLastError = true)]
+        public static extern uint NtDuplicateObject(
+            IntPtr SourceProcessHandle,
+            IntPtr SourceHandle,
+            IntPtr TargetProcessHandle,
+            out IntPtr TargetHandle,
+            uint DesiredAccess,
+            uint HandleAttributes,
+            uint Options);
     }
 }

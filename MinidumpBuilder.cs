@@ -459,6 +459,7 @@ namespace WinEmuDump
                 int threadNamesStreamIndex = -1;
                 int commentStreamAIndex = -1;
                 int commentStreamWIndex = -1;
+                int emuHandleStreamIndex = -1;
 
                 // SystemInfo Stream (placeholder)
                 streams.Add(CreateSystemInfoStream(systemInfo, 0));
@@ -561,6 +562,13 @@ namespace WinEmuDump
                 // HandleOperationListStream - Handle operation list (boş liste)
                 streams.Add(CreateHandleOperationListStream(0));
 
+                // EmuHandleInfoStream - Emülatör için genişletilmiş handle durumu bilgisi
+                if (handleList.Count > 0)
+                {
+                    emuHandleStreamIndex = streams.Count;
+                    streams.Add(CreateEmuHandleInfoStream(hProcess, processInfo, handleList, 0)); // streamBaseRva=0 ile üret
+                }
+
                 // TokenStream - Security token bilgileri (boş liste)
                 streams.Add(CreateTokenStream(0));
 
@@ -612,6 +620,13 @@ namespace WinEmuDump
                     {
                         Console.WriteLine($"[DEBUG] Handle stream RVA düzeltiliyor, base offset: 0x{currentOffset:X}");
                         streams[i] = CreateHandleListStream(handleList, currentOffset);
+                    }
+
+                    // EmuHandleInfoStream için RVA'ları düzelt
+                    if (i == emuHandleStreamIndex)
+                    {
+                        Console.WriteLine($"[DEBUG] EmuHandleInfo stream RVA düzeltiliyor, base offset: 0x{currentOffset:X}");
+                        streams[i] = CreateEmuHandleInfoStream(hProcess, processInfo, handleList, currentOffset);
                     }
 
                     // Module stream'i için RVA'ları düzelt
@@ -908,6 +923,15 @@ namespace WinEmuDump
 
         /// <summary>
         /// ThreadList stream'i oluşturur (MINIDUMP_THREAD formatında - DOĞRU FORMAT)
+        /// SuspendCount alanını thread'in bekleme durumuna göre 0/1 olarak doldurur.
+        ///
+        /// Not:
+        /// - Bu alanın resmi anlamı "askıya alınma sayısı"dır, ancak burada isteğe göre
+        ///   "wait reason" temsili olarak kullanıyoruz:
+        ///     * Thread beklemede/suspended ise: SuspendCount = 1
+        ///     * Thread çalışır (executive / running) ise: SuspendCount = 0
+        /// - Bilgi, ProcessThread API'si üzerinden alınır, CollectAdvancedThreadInformation içinde
+        ///   Process nesnesine zaten sahip olduğumuz için burada tekrar oluşturuyoruz.
         /// </summary>
         private static MinidumpStream CreateThreadListStream(List<MinidumpThreadInfo> threadList, uint streamBaseRva = 0)
         {
@@ -933,8 +957,104 @@ namespace WinEmuDump
             // Context offset'leri hesapla (stream başından itibaren)
             uint currentContextOffset = (uint)threadData.Count + (uint)(threadList.Count * Marshal.SizeOf(typeof(MINIDUMP_THREAD)));
 
+            // Process nesnesini threadId üzerinden çözmek için hazırla
+            System.Diagnostics.Process targetProcess = null;
+            try
+            {
+                if (threadList.Count > 0)
+                {
+                    // Thread infos içinde ilk geçerli threadId'den processId'yi zaten biliyoruz:
+                    // CollectAdvancedThreadInformation, process handle'dan Process nesnesini alarak list oluşturuyor.
+                    // Burada daha güvenli olması için ilk thread'in ThreadId'sini kullanıp
+                    // ilgili process'i tekrar çözüyoruz.
+                    uint anyThreadId = threadList[0].ThreadId;
+                    foreach (var p in System.Diagnostics.Process.GetProcesses())
+                    {
+                        try
+                        {
+                            foreach (System.Diagnostics.ProcessThread t in p.Threads)
+                            {
+                                if ((uint)t.Id == anyThreadId)
+                                {
+                                    targetProcess = p;
+                                    break;
+                                }
+                            }
+                            if (targetProcess != null)
+                                break;
+                        }
+                        catch
+                        {
+                            // Erişim hatalarını yok say
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WARNING] ThreadList için hedef Process çözülemedi: {ex.Message}");
+            }
+
             foreach (var threadInfo in threadList)
             {
+                // Varsayılan: 0 (executive/running kabul et)
+                uint suspendCount = 0;
+
+                try
+                {
+                    if (targetProcess != null)
+                    {
+                        System.Diagnostics.ProcessThread pt = null;
+                        foreach (System.Diagnostics.ProcessThread t in targetProcess.Threads)
+                        {
+                            if ((uint)t.Id == threadInfo.ThreadId)
+                            {
+                                pt = t;
+                                break;
+                            }
+                        }
+
+                        if (pt != null)
+                        {
+                            // WaitReason yalnızca beklemede olan thread'ler için geçerli.
+                            // Eğer beklemede ve bekleme nedeni "Suspended" ise => 1
+                            // Diğer tüm durumlarda => 0
+                            try
+                            {
+                                if (pt.ThreadState == System.Diagnostics.ThreadState.Wait &&
+                                    pt.WaitReason == System.Diagnostics.ThreadWaitReason.Suspended)
+                                {
+                                    suspendCount = 1;
+                                }
+                                else
+                                {
+                                    suspendCount = 0;
+                                }
+
+                                Console.WriteLine($"[DEBUG] Thread {threadInfo.ThreadId}: State={pt.ThreadState}, WaitReason={pt.WaitReason}, SuspendFlag={suspendCount}");
+                            }
+                            catch (Exception exWait)
+                            {
+                                Console.WriteLine($"[DEBUG] Thread {threadInfo.ThreadId} WaitReason okunamadı: {exWait.Message}, varsayılan=0");
+                                suspendCount = 0;
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine($"[DEBUG] Thread {threadInfo.ThreadId} için ProcessThread bulunamadı, varsayılan SuspendCount=0");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[DEBUG] Hedef Process bulunamadı, Thread {threadInfo.ThreadId} için varsayılan SuspendCount=0");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[DEBUG] Thread {threadInfo.ThreadId} suspend flag hesaplanırken hata: {ex.Message}, varsayılan=0");
+                    suspendCount = 0;
+                }
+
                 // Context RVA hesapla (dosyanın başından itibaren)
                 uint contextRva = streamBaseRva + currentContextOffset;
 
@@ -942,7 +1062,8 @@ namespace WinEmuDump
                 MINIDUMP_THREAD thread = new MINIDUMP_THREAD
                 {
                     ThreadId = threadInfo.ThreadId,
-                    SuspendCount = 1, // Suspended durumda
+                    // Kullanıcının istediği semantik: Suspended -> 1, Executive/diğer -> 0
+                    SuspendCount = suspendCount,
                     PriorityClass = threadInfo.PriorityClass,
                     Priority = threadInfo.Priority,
                     Teb = threadInfo.TebAddress,
@@ -952,7 +1073,7 @@ namespace WinEmuDump
                         Memory = new MINIDUMP_LOCATION_DESCRIPTOR
                         {
                             DataSize = threadInfo.HasValidStack ? threadInfo.StackSize : 0,
-                            // Memory64List ile uyumlu - stack verisi orada bulunacak
+                            // Stack verisi Memory64List içinde tutuluyor, burada RVA=0 bırakıyoruz.
                             Rva = 0
                         }
                     },
@@ -973,7 +1094,7 @@ namespace WinEmuDump
 
                 currentContextOffset += (uint)Marshal.SizeOf(typeof(CONTEXT));
 
-                Console.WriteLine($"[DEBUG] Thread {threadInfo.ThreadId}: TEB=0x{threadInfo.TebAddress:X}, Stack=0x{threadInfo.StackBase:X} ({threadInfo.StackSize} bytes), ContextRVA=0x{contextRva:X}");
+                Console.WriteLine($"[DEBUG] Thread {threadInfo.ThreadId}: TEB=0x{threadInfo.TebAddress:X}, Stack=0x{threadInfo.StackBase:X} ({threadInfo.StackSize} bytes), ContextRVA=0x{contextRva:X}, SuspendCount={suspendCount}");
             }
 
             // 3. Context verilerini yaz
@@ -3042,6 +3163,228 @@ namespace WinEmuDump
                 StreamType = MINIDUMP_STREAM_TYPE_Token,
                 Data = tokenData.ToArray()
             };
+        }
+
+        /// <summary>
+        /// EmuHandleInfoStream oluşturur:
+        /// - Her handle için EMU_HANDLE_ENTRY
+        /// - İleride Event/Mutex/Semaphore için type-specific state bloklarını doldurmak üzere iskelet.
+        /// Şu an için sadece tip eşlemesi ve temel header/entry yapısı üretilir.
+        /// </summary>
+        private static MinidumpStream CreateEmuHandleInfoStream(IntPtr hProcess, ProcessInfoData processInfo, List<HandleInfo> handleList, uint streamBaseRva = 0)
+        {
+            Console.WriteLine($"[DEBUG] EmuHandleInfoStream oluşturuluyor, handle sayısı: {handleList.Count}");
+
+            // Header hazırlığı
+            EMU_HANDLE_INFO_HEADER header = new EMU_HANDLE_INFO_HEADER
+            {
+                SizeOfHeader = (uint)Marshal.SizeOf(typeof(EMU_HANDLE_INFO_HEADER)),
+                Version = 1,
+                Flags = 0,
+                NumberOfEntries = (uint)handleList.Count,
+                Reserved0 = 0,
+                Reserved1 = 0
+            };
+
+            List<byte> data = new List<byte>();
+            byte[] headerBytes = StructHelper.StructToByteArray(header);
+            data.AddRange(headerBytes);
+
+            int entrySize = Marshal.SizeOf(typeof(EMU_HANDLE_ENTRY));
+            long entriesRegionSize = (long)entrySize * handleList.Count;
+
+            // Type-specific detay blokları entries bölgesinden sonra başlayacak
+            uint currentDetailOffset = (uint)(headerBytes.Length + entriesRegionSize);
+            List<EMU_HANDLE_ENTRY> entries = new List<EMU_HANDLE_ENTRY>(handleList.Count);
+            List<byte> detailBlobs = new List<byte>();
+
+            foreach (var h in handleList)
+            {
+                EMU_HANDLE_ENTRY entry = new EMU_HANDLE_ENTRY
+                {
+                    HandleValue = h.HandleValue,
+                    EmuType = MapEmuHandleType(h.TypeName),
+                    Flags = 0,
+                    DetailRva = 0,
+                    DetailSize = 0,
+                    Reserved0 = 0,
+                    Reserved1 = 0
+                };
+
+                // Event için gerçek state bilgilerini oku ve EMU_EVENT_INFO_V1 üret:
+                if (entry.EmuType == EMU_HANDLE_TYPE.Event)
+                {
+                    byte manualReset = 0xFF; // 0xFF = bilinmiyor (fallback)
+                    byte signaled = 0xFF;    // 0xFF = bilinmiyor (fallback)
+
+                    // Gerçek Event state'ini okumaya çalış
+                    try
+                    {
+                        // Event handle'ının gerçek state'ini NtQueryEvent ile oku
+                        // hProcess parametresi eklendi
+                        // hProcess artık doğrudan fonksiyona parametre olarak geliyor.
+                        QueryEventState(hProcess, entry.HandleValue, out manualReset, out signaled);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[DEBUG] Event {entry.HandleValue:X} state okunamadı: {ex.Message}, fallback=0xFF");
+                        manualReset = 0xFF;
+                        signaled = 0xFF;
+                    }
+
+                    EMU_EVENT_INFO_V1 evt = new EMU_EVENT_INFO_V1
+                    {
+                        Size = (uint)Marshal.SizeOf(typeof(EMU_EVENT_INFO_V1)), // 16 byte
+                        Version = 1,
+                        Flags = 0,
+                        ManualReset = manualReset,
+                        Signaled = signaled,
+                        Reserved0 = 0,
+                        Reserved1 = 0
+                    };
+
+                    // Bu entry için detail RVA/size hesapla
+                    // ÖNEMLİ DÜZELTME: DetailRva, stream'in başlangıcına GÖRECELİ olmalıdır.
+                    // ImHex'in mantığı: Gerçek Adres = StreamBaseRVA + DetailRva
+                    // Bizim DetailRva'mız stream içindeki ofset olmalı.
+                    // ANCAK, streamBaseRva'nın kendisi, tüm stream'in dosyadaki başlangıcıdır.
+                    // DetailRva, detay bloğunun dosyadaki mutlak RVA'sı olmalıdır. ImHex bunu bekliyor.
+                    // Hayır, ImHex `Location.Rva + DetailRva` yapıyor. `DetailRva` stream içi ofset olmalı.
+                    // Tekrar başa döndük.
+                    // Sizin dediğiniz doğru: "currentDetailOffset ile birşeyi toplaman lazım".
+                    // Bu `streamBaseRva` olmalı.
+                    entry.DetailRva = streamBaseRva + currentDetailOffset;
+                    entry.DetailSize = evt.Size;
+                    entry.Flags |= EMU_HANDLE_FLAG_HAS_STATE_INFO;
+
+                    // Bloğu detailBlobs sonuna yaz
+                    byte[] evtBytes = StructHelper.StructToByteArray(evt);
+                    detailBlobs.AddRange(evtBytes);
+                    currentDetailOffset += evt.Size;
+
+                    Console.WriteLine($"[DEBUG] Event {entry.HandleValue:X}: ManualReset={manualReset}, Signaled={signaled}, RVA=0x{entry.DetailRva:X}");
+                }
+
+                entries.Add(entry);
+            }
+
+            // Entry struct'larını yaz
+            foreach (var e in entries)
+            {
+                byte[] entryBytes = StructHelper.StructToByteArray(e);
+                data.AddRange(entryBytes);
+            }
+
+            // Type-specific detay bloklarını entries'in arkasına ekle
+            data.AddRange(detailBlobs);
+
+            Console.WriteLine($"[DEBUG] EmuHandleInfoStream boyutu: {data.Count} bytes (Header={headerBytes.Length}, Entries={entries.Count * entrySize}, Details={detailBlobs.Count})");
+
+            return new MinidumpStream
+            {
+                StreamType = MINIDUMP_STREAM_TYPE_EmuHandleInfo,
+                Data = data.ToArray()
+            };
+        }
+
+        /// <summary>
+        /// Event handle'ının gerçek state bilgilerini (ManualReset, Signaled) NtQueryEvent ile oku.
+        /// </summary>
+        /// <param name="handleValue">Event handle değeri</param>
+        /// <param name="manualReset">1 = Manual reset, 0 = Auto reset, 0xFF = bilinmiyor</param>
+        /// <param name="signaled">1 = Signaled, 0 = Non-signaled, 0xFF = bilinmiyor</param>
+        private static void QueryEventState(IntPtr hProcess, ulong handleValue, out byte manualReset, out byte signaled)
+        {
+            manualReset = 0xFF;
+            signaled = 0xFF;
+            IntPtr duplicatedHandle = IntPtr.Zero;
+
+            try
+            {
+                // 1. Hedef process'teki handle'ı kendi process'imize kopyala
+                uint ntStatus = NativeApi.NtDuplicateObject(
+                    hProcess,
+                    (IntPtr)(long)handleValue,
+                    Process.GetCurrentProcess().Handle,
+                    out duplicatedHandle,
+                    EVENT_QUERY_STATE, // Talep edilen erişim hakkı
+                    0,
+                    0 // DUPLICATE_SAME_ACCESS yerine 0
+                );
+
+                if (ntStatus != 0 || duplicatedHandle == IntPtr.Zero)
+                {
+                    Console.WriteLine($"[WARNING] NtDuplicateObject failed for handle {handleValue:X}. NTSTATUS=0x{ntStatus:X}");
+                    return;
+                }
+
+                // 2. Kopyalanan (yerel) handle üzerinde sorgulama yap
+                const int EventBasicInformation = 0;
+                int bufferSize = 8; // EventType (4) + SignalState (4)
+                IntPtr buffer = Marshal.AllocHGlobal(bufferSize);
+                try
+                {
+                    ntStatus = NativeApi.NtQueryEvent(duplicatedHandle, EventBasicInformation, buffer, (uint)bufferSize, out uint returnLength);
+
+                    if (ntStatus == 0 && returnLength >= 8)
+                    {
+                        int eventType = Marshal.ReadInt32(buffer, 0);
+                        manualReset = (byte)(eventType == 1 ? 1 : 0); // 1 = ManualReset
+
+                        int signalState = Marshal.ReadInt32(buffer, 4);
+                        signaled = (byte)(signalState > 0 ? 1 : 0); // 1 = Signaled
+
+                        Console.WriteLine($"[DEBUG] NtQueryEvent success: Handle={handleValue:X}, Duplicated={duplicatedHandle:X}, EventType={eventType}, SignalState={signalState}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[WARNING] NtQueryEvent failed on duplicated handle. NTSTATUS=0x{ntStatus:X}, ReturnLength={returnLength}");
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WARNING] QueryEventState exception: {ex.Message}");
+            }
+            finally
+            {
+                // 3. Kopyalanan handle'ı kapat
+                if (duplicatedHandle != IntPtr.Zero)
+                {
+                    NativeApi.NtClose(duplicatedHandle);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Handle type name -> EMU_HANDLE_TYPE map fonksiyonu.
+        /// </summary>
+        private static EMU_HANDLE_TYPE MapEmuHandleType(string typeName)
+        {
+            if (string.IsNullOrEmpty(typeName))
+                return EMU_HANDLE_TYPE.Unknown;
+
+            switch (typeName)
+            {
+                case "Event":
+                case "EventPair":
+                    return EMU_HANDLE_TYPE.Event;
+                case "Mutant":
+                case "Mutex":
+                    return EMU_HANDLE_TYPE.Mutex;
+                case "Semaphore":
+                    return EMU_HANDLE_TYPE.Semaphore;
+                case "Timer":
+                    return EMU_HANDLE_TYPE.Timer;
+                case "IoCompletion":
+                    return EMU_HANDLE_TYPE.IoCompletion;
+                default:
+                    return EMU_HANDLE_TYPE.Unknown;
+            }
         }
 
         /// <summary>

@@ -143,6 +143,8 @@ namespace WinEmuDump
         public const uint THREAD_QUERY_INFORMATION = 0x0040;
         public const uint THREAD_GET_CONTEXT = 0x0008;
 
+        public const uint EVENT_QUERY_STATE = 0x0001;
+        public const uint DUPLICATE_SAME_ACCESS = 0x00000002;
         // Minidump Stream Type Constants
         public const uint MINIDUMP_STREAM_TYPE_ThreadList = 3;
         public const uint MINIDUMP_STREAM_TYPE_ModuleList = 4;
@@ -166,6 +168,10 @@ namespace WinEmuDump
         public const uint MINIDUMP_STREAM_TYPE_ProcessVmCounters = 22;
         public const uint MINIDUMP_STREAM_TYPE_IptTrace = 23;
         public const uint MINIDUMP_STREAM_TYPE_ThreadNames = 24;
+
+        // Emulator-specific custom stream (EmuHandleInfo)
+        // Vendor-specific aralıkta tutuyoruz ki resmi dbghelp ile çakışmasın.
+        public const uint MINIDUMP_STREAM_TYPE_EmuHandleInfo = 0xE0000100;
 
 
         // DllImport functions have been moved to separate files:
@@ -613,7 +619,87 @@ namespace WinEmuDump
             public ulong NumberOfEntries;
         }
 
-        ///////////////// ADVANCED STREAM STRUCTS (Token, JavaScript, IPT) /////////////////
+        ///////////////// ADVANCED STREAM STRUCTS (Token, JavaScript, IPT, EmuHandle) /////////////////
+
+        // EMU_HANDLE_TYPE - Emulatör için handle türleri
+        public enum EMU_HANDLE_TYPE : uint
+        {
+            Unknown      = 0,
+            Event        = 1,
+            Mutex        = 2,
+            Semaphore    = 3,
+            Timer        = 4,
+            IoCompletion = 5,
+        }
+
+        // EMU_HANDLE_INFO_HEADER - EmuHandleInfo stream header
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct EMU_HANDLE_INFO_HEADER
+        {
+            public uint SizeOfHeader;    // sizeof(EMU_HANDLE_INFO_HEADER)
+            public ushort Version;       // 1
+            public ushort Flags;         // global flags (şimdilik 0)
+            public uint NumberOfEntries; // EMU_HANDLE_ENTRY sayısı
+            public uint Reserved0;       // future use
+            public uint Reserved1;       // future use
+        }
+
+        // EMU_HANDLE_ENTRY - Her handle için ortak bilgiler
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct EMU_HANDLE_ENTRY
+        {
+            public ulong HandleValue;   // Orijinal hedef süreçteki handle değeri
+            public EMU_HANDLE_TYPE EmuType;
+            public uint Flags;          // Ortak bayraklar (HAS_STATE_INFO, STATE_QUERY_FAILED, vs.)
+            public uint DetailRva;      // Tür spesifik bilgi bloğuna RVA (0 => yok)
+            public uint DetailSize;     // Tür spesifik bilgi bloğu boyutu
+            public uint Reserved0;      // future use
+            public uint Reserved1;      // future use
+        }
+
+        // Ortak Flags (EMU_HANDLE_ENTRY.Flags) için bitler
+        public const uint EMU_HANDLE_FLAG_HAS_STATE_INFO      = 0x00000001;
+        public const uint EMU_HANDLE_FLAG_STATE_QUERY_FAILED  = 0x00000002;
+        public const uint EMU_HANDLE_FLAG_TYPE_MISMATCH       = 0x00000004;
+
+        // EMU_EVENT_INFO_V1 - Event handle detayları
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct EMU_EVENT_INFO_V1
+        {
+            public uint Size;        // sizeof(EMU_EVENT_INFO_V1)
+            public ushort Version;   // 1
+            public ushort Flags;     // future use
+            public byte ManualReset; // 0 = Auto, 1 = Manual, 0xFF = bilinmiyor
+            public byte Signaled;    // 0 = Non-signaled, 1 = Signaled, 0xFF = bilinmiyor
+            public ushort Reserved0; // alignment
+            public uint Reserved1;   // future use
+            public uint Reserved2;   // future use
+            public uint Reserved3;   // future use
+        }
+
+        // EMU_MUTEX_INFO_V1 - Mutex handle detayları (şema hazır, veriler opsiyonel)
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct EMU_MUTEX_INFO_V1
+        {
+            public uint Size;
+            public ushort Version;       // 1
+            public ushort Flags;
+            public uint OwnerThreadId;   // biliniyorsa, yoksa 0
+            public uint LockCount;       // biliniyorsa, yoksa 0
+            public uint Reserved0;
+        }
+
+        // EMU_SEMAPHORE_INFO_V1 - Semaphore handle detayları (şema hazır, veriler opsiyonel)
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        public struct EMU_SEMAPHORE_INFO_V1
+        {
+            public uint Size;
+            public ushort Version;   // 1
+            public ushort Flags;
+            public uint CurrentCount; // biliniyorsa
+            public uint MaximumCount; // biliniyorsa
+            public uint Reserved0;
+        }
 
         // MINIDUMP_TOKEN_INFO_LIST - Token stream header
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
